@@ -1,4 +1,3 @@
-// src/composables/useSignalR.js
 import { ref, readonly } from 'vue'
 import * as signalR from '@microsoft/signalr'
 

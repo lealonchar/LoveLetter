@@ -1,41 +1,44 @@
-// src/stores/gameStore.js
 import { reactive, computed } from 'vue'
 import { useSignalR } from '../composables/useSignalR'
 
-const { connect, on, off, invoke, isConnected } = useSignalR()
+const { connect, on, invoke, isConnected } = useSignalR()
 
 // Central reactive game state
 const state = reactive({
   myName: '',
-  myId: null,          // Set from first GameStateUpdated (yourState.id)
+  myId: null,
   roomCode: null,
-  gameState: null,     // Latest GameStateDto from server
-  drawnCard: null,     // Separate draw phase card
+  gameState: null,
   priestReveal: null,  // { targetId, card } from Priest effect
   pendingError: null,
   isConnecting: false,
 })
 
-// ── Computed helpers ──────────────────────────────────────────────────────────
-
+// Computed helpers
 const myPlayer = computed(() =>
-  state.gameState?.yourState ?? null
+    state.gameState?.yourState ?? null
 )
 
-const isMyTurn = computed(() =>
-  state.gameState?.players[state.gameState.currentPlayerId_Index]?.id === state.myId
-)
+const isMyTurn = computed(() => {
+  if (!state.gameState) return false
+  const currentPlayer = state.gameState.players[state.gameState.currentPlayerId_Index]
+  if (currentPlayer?.id !== state.myId) return false
+  // Don't show play UI if waiting for Chancellor resolution from someone else
+  if (state.gameState.pendingAction === 'Chancellor' &&
+      state.gameState.chancellorOptions?.length === 0)
+    return false
+  return true
+})
 
 const activePlayers = computed(() =>
-  state.gameState?.players.filter(p => !p.isEliminated) ?? []
+    state.gameState?.players.filter(p => !p.isEliminated) ?? []
 )
 
 const opponents = computed(() =>
-  activePlayers.value.filter(p => p.id !== state.myId)
+    activePlayers.value.filter(p => p.id !== state.myId)
 )
 
-// ── Setup SignalR listeners ────────────────────────────────────────────────────
-
+// SignalR listeners
 function setupListeners() {
   on('GameStateUpdated', (dto) => {
     state.gameState = dto
@@ -59,12 +62,11 @@ function setupListeners() {
   })
 
   on('PlayerLeft', (_id) => {
-    // GameStateUpdated will follow; this is just for UX notification hooks
+    // GameStateUpdated will follow
   })
 }
 
-// ── Actions ───────────────────────────────────────────────────────────────────
-
+// Actions
 async function init() {
   state.isConnecting = true
   try {
@@ -102,6 +104,10 @@ async function startNextRound() {
   await invoke('StartNextRound', state.roomCode)
 }
 
+async function resolveChancellor(cardType) {
+  await invoke('ResolveChancellor', state.roomCode, cardType)
+}
+
 export function useGameStore() {
   return {
     state,
@@ -117,5 +123,6 @@ export function useGameStore() {
     startGame,
     playCard,
     startNextRound,
+    resolveChancellor,
   }
 }

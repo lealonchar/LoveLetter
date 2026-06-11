@@ -11,9 +11,9 @@
 
       <div class="border-t border-rose-800 pt-4 space-y-2">
         <div
-          v-for="player in state.gameState?.players ?? []"
-          :key="player.id"
-          class="flex items-center gap-3 bg-rose-800/40 rounded-xl px-4 py-3">
+            v-for="player in state.gameState?.players ?? []"
+            :key="player.id"
+            class="flex items-center gap-3 bg-rose-800/40 rounded-xl px-4 py-3">
           <span class="text-rose-300">{{ player.isAi ? '🤖' : '👤' }}</span>
           <span class="text-rose-100 font-medium">{{ player.name }}</span>
           <span v-if="player.id === state.gameState?.players[0]?.id"
@@ -23,23 +23,23 @@
         </div>
 
         <p class="text-rose-500 text-sm">
-          {{ state.gameState?.players?.length ?? 0 }}/4 players · need at least 2
+          {{ state.gameState?.players?.length ?? 0 }}/6 players · need at least 3
         </p>
       </div>
 
       <!-- Host controls -->
       <template v-if="isHost">
         <button
-          v-if="(state.gameState?.players?.length ?? 0) < 4"
-          @click="addAiPlayer"
-          class="w-full bg-rose-800 hover:bg-rose-700 text-rose-200 rounded-xl py-2.5 text-sm transition-colors">
+            v-if="(state.gameState?.players?.length ?? 0) < 6"
+            @click="addAiPlayer"
+            class="w-full bg-rose-800 hover:bg-rose-700 text-rose-200 rounded-xl py-2.5 text-sm transition-colors">
           + Add AI player
         </button>
 
         <button
-          @click="startGame"
-          :disabled="(state.gameState?.players?.length ?? 0) < 2"
-          class="w-full bg-rose-500 hover:bg-rose-400 disabled:opacity-40 disabled:cursor-not-allowed
+            @click="startGame"
+            :disabled="(state.gameState?.players?.length ?? 0) < 3"
+            class="w-full bg-rose-500 hover:bg-rose-400 disabled:opacity-40 disabled:cursor-not-allowed
                  text-white font-semibold rounded-xl py-3 transition-colors">
           Start Game
         </button>
