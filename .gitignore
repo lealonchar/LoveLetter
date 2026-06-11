@@ -1,0 +1,19 @@
+﻿# .NET
+backend/bin/
+backend/obj/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Environment
+frontend/.env
+frontend/.env.local
+
+# IDE
+.idea/
+.vs/
+
+# OS
+.DS_Store
+Thumbs.db

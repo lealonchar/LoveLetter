@@ -1,0 +1,31 @@
+﻿using LoveLetter.Domain.Enums;
+
+namespace LoveLetter.Domain.Models;
+
+public class GameRoom
+{
+    public string Code { get; init; }
+    public string HostId { get; set; }
+    public List<Player> Players { get; set; } = [];
+    public GamePhase Phase { get; set; } = GamePhase.Lobby;
+
+    // Round state
+    public List<Card> DrawPile { get; set; } = [];
+    public Card? SetAsideCard { get; set; } // Face-down removed card
+    public int CurrentPlayerIndex { get; set; }
+    public Card? DrawnCard { get; set; } // Card drawn this turn (before play)
+    public string? PendingAction { get; set; } // Waiting for secondary input
+    public int RoundsToWin => Players.Count switch { 2 => 7, 3 => 5, _ => 4 };
+    public List<string> Log { get; set; } = [];
+    public List<Card> ChancellorOptions { get; set; } = [];
+    public string? ChancellorPlayerId { get; set; }
+
+    public Player? CurrentPlayer =>
+        Players.Count > 0 ? Players[CurrentPlayerIndex] : null;
+
+    public GameRoom(string code, string hostId)
+    {
+        Code = code;
+        HostId = hostId;
+    }
+}
