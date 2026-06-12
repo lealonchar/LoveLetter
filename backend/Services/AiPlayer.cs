@@ -19,6 +19,9 @@ public class AiPlayer
     public (CardType cardToPlay, string? targetId, CardType? guardGuess)
         DecideAction(GameRoom room, Player me)
     {
+        if (me.Hand == null || room.DrawnCard == null)
+            return (CardType.Spy, null, null); 
+        
         var hand = me.Hand!;
         var drawn = room.DrawnCard!;
         var opponents = room.Players

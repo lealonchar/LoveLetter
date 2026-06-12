@@ -76,6 +76,7 @@ public class GameHub : Hub
         { await Clients.Caller.SendAsync("Error", "Need at least 3 players."); return; }
 
         StartRound(room);
+        _engine.BeginTurn(room);
         await BroadcastState(room);
         await RunAiTurn(room);
     }
@@ -125,6 +126,7 @@ public class GameHub : Hub
         if (room.Phase != GamePhase.RoundOver) return;
 
         StartRound(room);
+        _engine.BeginTurn(room);
         await BroadcastState(room);
         await RunAiTurn(room);
     }
@@ -150,14 +152,16 @@ public class GameHub : Hub
             return;
         }
 
-        // Wait for Chancellor resolution before advancing
         if (room.PendingAction == "Chancellor")
         {
             await BroadcastState(room);
             return;
         }
 
+
+        if (room.DrawPile.Count == 0) { _engine.CheckRoundEnd(room); await BroadcastState(room); return; }
         _engine.BeginTurn(room);
+
         await BroadcastState(room);
         await RunAiTurn(room);
     }
@@ -168,14 +172,35 @@ public class GameHub : Hub
         int safety = 0;
         while (room.Phase == GamePhase.Playing &&
                room.CurrentPlayer?.IsAi == true &&
-               safety++ < 10)
+               safety++ < 20)
         {
             await Task.Delay(800);
 
             var ai = room.CurrentPlayer;
+            
+            if (room.PendingAction == "Chancellor" && room.ChancellorPlayerId == ai.Id)
+            {
+                var best = room.ChancellorOptions.OrderByDescending(c => c.Value).First();
+                var returns = room.ChancellorOptions.Where(c => c != best).ToList();
+                ai.Hand = best;
+                foreach (var c in returns) room.DrawPile.Add(c);
+                room.ChancellorOptions.Clear();
+                room.ChancellorPlayerId = null;
+                room.PendingAction = null;
+                room.Log.Add($"{ai.Name} kept a card and returned {returns.Count} to the bottom of the deck.");
+
+                if (room.DrawPile.Count == 0) { _engine.CheckRoundEnd(room); break; }
+                _engine.BeginTurn(room);
+                continue;
+            }
+
+            if (room.PendingAction != null) break; // unknown pending action, bail
+
             if (!AiPlayers.TryGetValue(room.Code, out var roomAis) ||
                 !roomAis.TryGetValue(ai.Id, out var aiLogic))
                 break;
+
+            if (room.DrawnCard == null) break;
 
             var (card, target, guess) = aiLogic.DecideAction(room, ai);
 
@@ -185,12 +210,16 @@ public class GameHub : Hub
             }
             catch
             {
-                _engine.PlayCard(room, ai.Id, room.DrawnCard!.Type, null, null);
+                if (room.DrawnCard != null)
+                    _engine.PlayCard(room, ai.Id, room.DrawnCard.Type, null, null);
+                else
+                    break;
             }
 
             if (room.Phase is GamePhase.RoundOver or GamePhase.GameOver)
                 break;
 
+            if (room.DrawPile.Count == 0) { _engine.CheckRoundEnd(room); break; }
             _engine.BeginTurn(room);
         }
 

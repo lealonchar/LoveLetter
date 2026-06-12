@@ -50,6 +50,11 @@ public class GameEngine
     
     public void BeginTurn(GameRoom room)
     {
+        if (room.DrawPile.Count == 0)
+        {
+            CheckRoundEnd(room);
+            return;
+        }
         var player = room.CurrentPlayer!;
         player.IsProtected = false;
         room.DrawnCard = DrawCard(room);
