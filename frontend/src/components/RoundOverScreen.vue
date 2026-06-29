@@ -21,7 +21,7 @@
 
       <!-- Last 3 log entries -->
       <div class="border-t border-rose-800 pt-3 space-y-1">
-        <p v-for="(entry, i) in state.gameState.log.slice(-3)" :key="i"
+        <p v-for="(entry, i) in recentLog" :key="i"
            class="text-rose-400 text-xs">{{ entry }}</p>
       </div>
 
@@ -43,11 +43,14 @@ import { useGameStore } from '../stores/gameStore'
 const { state, startNextRound } = useGameStore()
 
 const isHost = computed(() => {
-  const players = state.gameState?.players
-  return players?.length > 0 && players[0].id === state.myId
+  return state.gameState?.hostId === state.myId
 })
 
 const sortedPlayers = computed(() =>
   [...(state.gameState?.players ?? [])].sort((a, b) => b.tokens - a.tokens)
+)
+
+const recentLog = computed(() =>
+  (state.gameState?.log ?? state.gameState?.Log ?? []).slice(-3)
 )
 </script>

@@ -3,11 +3,26 @@ import { useSignalR } from '../composables/useSignalR'
 
 const { connect, on, invoke, isConnected } = useSignalR()
 
+const STORAGE_KEYS = {
+  playerId: 'loveletter.playerId',
+  roomCode: 'loveletter.roomCode',
+  playerName: 'loveletter.playerName',
+}
+
+function getOrCreatePlayerId() {
+  let playerId = localStorage.getItem(STORAGE_KEYS.playerId)
+  if (!playerId) {
+    playerId = crypto.randomUUID()
+    localStorage.setItem(STORAGE_KEYS.playerId, playerId)
+  }
+  return playerId
+}
+
 // Central reactive game state
 const state = reactive({
   myName: '',
-  myId: null,
-  roomCode: null,
+  myId: getOrCreatePlayerId(),
+  roomCode: localStorage.getItem(STORAGE_KEYS.roomCode),
   gameState: null,
   priestReveal: null,  // { targetId, card } from Priest effect
   pendingError: null,
@@ -41,14 +56,22 @@ const opponents = computed(() =>
 // SignalR listeners
 function setupListeners() {
   on('GameStateUpdated', (dto) => {
+    dto.log = dto.log ?? dto.Log ?? []
     state.gameState = dto
-    if (!state.myId && dto.yourState)
+    if (dto.yourState)
       state.myId = dto.yourState.id
     state.pendingError = null
   })
 
   on('RoomCreated', (code) => {
     state.roomCode = code
+    localStorage.setItem(STORAGE_KEYS.roomCode, code)
+  })
+
+  on('ReconnectFailed', (_msg) => {
+    state.roomCode = null
+    state.gameState = null
+    localStorage.removeItem(STORAGE_KEYS.roomCode)
   })
 
   on('PriestReveal', (targetId, card) => {
@@ -64,6 +87,18 @@ function setupListeners() {
   on('PlayerLeft', (_id) => {
     // GameStateUpdated will follow
   })
+
+  on('LeftRoom', () => {
+    clearRoomState()
+  })
+}
+
+function clearRoomState() {
+  state.roomCode = null
+  state.gameState = null
+  state.priestReveal = null
+  state.pendingError = null
+  localStorage.removeItem(STORAGE_KEYS.roomCode)
 }
 
 // Actions
@@ -72,6 +107,8 @@ async function init() {
   try {
     await connect()
     setupListeners()
+    if (state.roomCode && state.myId)
+      await invoke('ReconnectToRoom', state.roomCode, state.myId)
   } finally {
     state.isConnecting = false
   }
@@ -79,17 +116,24 @@ async function init() {
 
 async function createRoom(name) {
   state.myName = name
-  await invoke('CreateRoom', name)
+  localStorage.setItem(STORAGE_KEYS.playerName, name)
+  await invoke('CreateRoom', name, state.myId)
 }
 
 async function joinRoom(code, name) {
   state.myName = name
   state.roomCode = code.toUpperCase()
-  await invoke('JoinRoom', code.toUpperCase(), name)
+  localStorage.setItem(STORAGE_KEYS.playerName, name)
+  localStorage.setItem(STORAGE_KEYS.roomCode, state.roomCode)
+  await invoke('JoinRoom', code.toUpperCase(), name, state.myId)
 }
 
 async function addAiPlayer() {
   await invoke('AddAiPlayer', state.roomCode)
+}
+
+async function renameAiPlayer(aiPlayerId, name) {
+  await invoke('RenameAiPlayer', state.roomCode, aiPlayerId, name)
 }
 
 async function startGame() {
@@ -108,6 +152,15 @@ async function resolveChancellor(cardType) {
   await invoke('ResolveChancellor', state.roomCode, cardType)
 }
 
+async function leaveGame() {
+  try {
+    if (state.roomCode)
+      await invoke('LeaveRoom')
+  } finally {
+    clearRoomState()
+  }
+}
+
 export function useGameStore() {
   return {
     state,
@@ -120,9 +173,11 @@ export function useGameStore() {
     createRoom,
     joinRoom,
     addAiPlayer,
+    renameAiPlayer,
     startGame,
     playCard,
     startNextRound,
     resolveChancellor,
+    leaveGame,
   }
 }

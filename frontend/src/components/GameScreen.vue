@@ -1,52 +1,32 @@
 <template>
   <div class="game-table">
+    <button type="button" class="leave-game-btn" @click="openLeaveConfirm">
+      Leave game
+    </button>
 
-    <!-- ── TOP PLAYER (opposite seat) ── -->
-    <div class="seat seat-top">
+    <div class="opponents-bar">
       <OpponentSeat
-          v-for="p in topPlayers"
+          v-for="p in opponents"
           :key="p.id"
           :player="p"
           :is-current="isCurrentPlayer(p)"
       />
     </div>
 
-    <!-- ── LEFT PLAYER ── -->
-    <div class="seat seat-left">
-      <OpponentSeat
-          v-for="p in leftPlayers"
-          :key="p.id"
-          :player="p"
-          :is-current="isCurrentPlayer(p)"
-          orientation="vertical"
-      />
-    </div>
-
-    <!-- ── RIGHT PLAYER ── -->
-    <div class="seat seat-right">
-      <OpponentSeat
-          v-for="p in rightPlayers"
-          :key="p.id"
-          :player="p"
-          :is-current="isCurrentPlayer(p)"
-          orientation="vertical"
-      />
-    </div>
-
-    <!-- ── TABLE CENTER ── -->
-    <div class="table-center">
-
-      <!-- Draw pile + set aside -->
+    <main class="table-center">
       <div class="pile-area">
-        <div class="card-back-stack">
-          <div class="card-back" v-for="n in Math.min(state.gameState.drawPileCount, 5)" :key="n"
-               :style="{ transform: `translateY(-${n * 1.5}px) translateX(${n * 0.5}px)` }" />
+        <div class="card-back-stack" aria-label="Draw pile">
+          <div
+              v-for="n in Math.min(state.gameState.drawPileCount, 5)"
+              :key="n"
+              class="card-back"
+              :style="{ transform: `translateY(-${n * 1.5}px) translateX(${n * 0.5}px)` }"
+          />
           <span class="pile-count">{{ state.gameState.drawPileCount }}</span>
         </div>
         <div class="card-back card-aside" title="Set aside card" />
       </div>
 
-      <!-- Turn indicator -->
       <div class="turn-banner">
         <Transition name="fade" mode="out-in">
           <span :key="state.gameState.currentPlayerName">
@@ -55,59 +35,47 @@
         </Transition>
       </div>
 
-      <!-- Tokens to win -->
-      <div class="tokens-info">
-        <span class="token-icon">💌</span>
-        <span>{{ state.gameState.roundsToWin }} to win</span>
-      </div>
+      <div class="tokens-info">{{ state.gameState.roundsToWin }} tokens to win</div>
 
-      <!-- Priest reveal -->
       <Transition name="pop">
         <div v-if="state.priestReveal" class="priest-bubble">
-          <span class="priest-eye">👁</span>
           <span>{{ getPlayerName(state.priestReveal.targetId) }} holds</span>
           <strong>{{ state.priestReveal.card }}</strong>
         </div>
       </Transition>
-    </div>
+    </main>
 
-    <!-- ── CHANCELLOR PICKER (full overlay) ── -->
-    <Transition name="slide-up">
-      <div v-if="isMyChancellorPending" class="chancellor-overlay">
-        <p class="chancellor-title">Choose a card to keep</p>
-        <p class="chancellor-sub">The other {{ state.gameState.chancellorOptions.length - 1 }} return to the bottom of the deck</p>
-        <div class="chancellor-cards">
-          <div
-              v-for="card in state.gameState.chancellorOptions"
-              :key="card.type"
-              :class="['chancellor-card-option', selectedChancellorCard === card.type ? 'selected' : '']"
-              @click="selectedChancellorCard = card.type">
-            <CardFace :card="card" size="lg" />
-          </div>
-        </div>
-        <button
-            @click="confirmChancellor"
-            :disabled="!selectedChancellorCard"
-            class="confirm-btn">
-          Keep this card
-        </button>
+    <aside :class="['log-panel', logOpen ? 'log-panel--open' : '']" aria-label="Game log">
+      <button type="button" class="log-toggle" @click="logOpen = !logOpen">
+        <span>{{ logOpen ? 'Close log' : 'Game log' }}</span>
+        <span class="log-count">{{ gameLog.length }}</span>
+      </button>
+      <div v-if="logOpen" class="log-entries">
+        <p v-if="gameLog.length === 0" class="log-entry log-entry--empty">
+          No log entries yet.
+        </p>
+        <p
+            v-for="(entry, i) in gameLog"
+            :key="i"
+            class="log-entry">
+          {{ entry }}
+        </p>
       </div>
-    </Transition>
+    </aside>
 
-    <!-- ── MY HAND (bottom) ── -->
-    <div class="my-area">
-
-      <!-- My info bar -->
+    <section :class="['my-area', selectedCard && isMyTurn ? 'my-area--acting' : '']">
       <div class="my-info-bar">
         <div class="my-tokens">
-          <span v-for="n in state.gameState.roundsToWin" :key="n"
-                :class="['token-dot', n <= (myPlayer?.tokens ?? 0) ? 'filled' : '']" />
+          <span
+              v-for="n in state.gameState.roundsToWin"
+              :key="n"
+              :class="['token-dot', n <= (myPlayer?.tokens ?? 0) ? 'filled' : '']"
+          />
         </div>
         <span class="my-name">{{ myPlayer?.name ?? '' }}</span>
-        <span v-if="myPlayer?.isProtected" class="shield-badge">🛡 Protected</span>
+        <span v-if="myPlayer?.isProtected" class="shield-badge">Protected</span>
       </div>
 
-      <!-- My discard pile (face up, fanned) -->
       <div v-if="myPlayer?.discards?.length" class="my-discards">
         <div
             v-for="(card, i) in myPlayer.discards"
@@ -119,69 +87,63 @@
         </div>
       </div>
 
-      <!-- Waiting message -->
-      <div v-if="!isMyTurn && !isMyChancellorPending && myPlayer && !myPlayer.isEliminated"
-           class="waiting-msg">
-        Waiting for {{ state.gameState.currentPlayerName }}…
+      <div v-if="!isMyTurn && !isMyChancellorPending && myPlayer && !myPlayer.isEliminated" class="waiting-msg">
+        Waiting for {{ state.gameState.currentPlayerName }}...
       </div>
 
       <div v-if="myPlayer?.isEliminated" class="eliminated-msg">
-        You've been eliminated — spectating
+        You've been eliminated - spectating
       </div>
 
-      <!-- My hand cards -->
-      <div v-if="isMyTurn && !isMyChancellorPending" class="my-hand">
-
-        <!-- Hand card -->
-        <div
-            v-if="myPlayer?.hand"
-            :class="['hand-card', selectedCard === myPlayer.hand.type ? 'hand-card--selected' : '']"
+      <div v-if="myPlayer?.hand && !isMyChancellorPending && !myPlayer.isEliminated" class="my-hand">
+        <button
+            type="button"
+            :disabled="!isMyTurn"
+            :class="['hand-card', !isMyTurn ? 'hand-card--disabled' : '', selectedCard === myPlayer.hand.type ? 'hand-card--selected' : '']"
             @click="selectCard(myPlayer.hand.type)">
           <CardFace :card="myPlayer.hand" size="lg" />
           <span class="card-label">In hand</span>
-        </div>
+        </button>
 
-        <!-- Drawn card -->
-        <div
+        <button
             v-if="state.gameState.drawnCard"
+            type="button"
             :class="['hand-card hand-card--drawn', selectedCard === state.gameState.drawnCard.type ? 'hand-card--selected' : '']"
             @click="selectCard(state.gameState.drawnCard.type)">
           <CardFace :card="state.gameState.drawnCard" size="lg" />
           <span class="card-label card-label--new">Just drawn</span>
-        </div>
+        </button>
       </div>
 
-      <!-- Action panel (target + guess) -->
       <Transition name="slide-up">
         <div v-if="selectedCard && isMyTurn" class="action-panel">
-
-          <!-- Target buttons -->
-          <div v-if="needsTarget(selectedCard)" class="target-row">
-            <span class="action-label">Target:</span>
+          <div v-if="needsTarget(selectedCard)" class="choice-row">
+            <span class="action-label">Target</span>
             <button
                 v-for="p in validTargets"
                 :key="p.id"
-                :class="['target-btn', selectedTarget === p.id ? 'target-btn--active' : '']"
+                type="button"
+                :class="['choice-btn', selectedTarget === p.id ? 'choice-btn--active' : '']"
                 @click="selectedTarget = p.id">
               {{ p.name }}
             </button>
             <span v-if="validTargets.length === 0" class="no-targets">No valid targets</span>
           </div>
 
-          <!-- Guard guess -->
-          <div v-if="selectedCard === 'Guard' && selectedTarget" class="guess-row">
-            <span class="action-label">Guess:</span>
+          <div v-if="selectedCard === 'Guard' && selectedTarget" class="choice-row">
+            <span class="action-label">Guess</span>
             <button
                 v-for="ct in guardGuesses"
                 :key="ct"
-                :class="['guess-btn', selectedGuess === ct ? 'guess-btn--active' : '']"
+                type="button"
+                :class="['choice-btn', selectedGuess === ct ? 'choice-btn--active' : '']"
                 @click="selectedGuess = ct">
               {{ ct }}
             </button>
           </div>
 
-          <!-- Play button -->
           <button
+              type="button"
               @click="confirmPlay"
               :disabled="!canConfirm"
               class="confirm-btn">
@@ -189,23 +151,50 @@
           </button>
         </div>
       </Transition>
-    </div>
+    </section>
 
-    <!-- ── COLLAPSIBLE LOG ── -->
-    <div :class="['log-panel', logOpen ? 'log-panel--open' : '']">
-      <button class="log-toggle" @click="logOpen = !logOpen">
-        {{ logOpen ? '✕ Close log' : '📜 Game log' }}
-      </button>
-      <div v-if="logOpen" class="log-entries">
-        <p
-            v-for="(entry, i) in [...state.gameState.log].reverse()"
-            :key="i"
-            class="log-entry">
-          {{ entry }}
-        </p>
+    <Transition name="slide-up">
+      <div v-if="isMyChancellorPending" class="chancellor-overlay">
+        <p class="chancellor-title">Choose a card to keep</p>
+        <p class="chancellor-sub">The other {{ state.gameState.chancellorOptions.length - 1 }} return to the bottom of the deck</p>
+        <div class="chancellor-cards">
+          <button
+              v-for="(card, index) in state.gameState.chancellorOptions"
+              :key="`${card.type}-${index}`"
+              type="button"
+              :class="['chancellor-card-option', selectedChancellorCard === card.type ? 'selected' : '']"
+              @click="selectedChancellorCard = card.type">
+            <CardFace :card="card" size="lg" />
+          </button>
+        </div>
+        <button
+            type="button"
+            @click="confirmChancellor"
+            :disabled="!selectedChancellorCard"
+            class="confirm-btn">
+          Keep this card
+        </button>
       </div>
-    </div>
+    </Transition>
 
+    <Transition name="pop">
+      <div v-if="leaveConfirmOpen" class="leave-modal-backdrop" role="dialog" aria-modal="true">
+        <div class="leave-modal">
+          <p class="leave-modal-title">Leave game?</p>
+          <p class="leave-modal-copy">
+            You will return to the home screen and give up your seat at this table.
+          </p>
+          <div class="leave-modal-actions">
+            <button type="button" class="modal-btn modal-btn--quiet" @click="leaveConfirmOpen = false">
+              Stay
+            </button>
+            <button type="button" class="modal-btn modal-btn--danger" @click="confirmLeave">
+              Leave
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -215,13 +204,14 @@ import { useGameStore } from '../stores/gameStore'
 import CardFace from './CardFace.vue'
 import OpponentSeat from './OpponentSeat.vue'
 
-const { state, myPlayer, isMyTurn, playCard, resolveChancellor } = useGameStore()
+const { state, myPlayer, isMyTurn, playCard, resolveChancellor, leaveGame } = useGameStore()
 
 const selectedCard = ref(null)
 const selectedTarget = ref(null)
 const selectedGuess = ref(null)
 const selectedChancellorCard = ref(null)
 const logOpen = ref(false)
+const leaveConfirmOpen = ref(false)
 
 const guardGuesses = ['Priest', 'Baron', 'Handmaid', 'Prince', 'Chancellor', 'King', 'Countess', 'Princess']
 const targetedCards = ['Guard', 'Priest', 'Baron', 'King']
@@ -236,29 +226,13 @@ const isMyChancellorPending = computed(() =>
     state.gameState?.chancellorOptions?.length > 0
 )
 
-// Distribute opponents around the table
 const opponents = computed(() =>
     state.gameState?.players.filter(p => p.id !== state.myId) ?? []
 )
 
-const topPlayers = computed(() => {
-  const ops = opponents.value
-  if (ops.length <= 2) return ops.slice(0, 1)
-  if (ops.length === 3) return ops.slice(1, 2)
-  return ops.slice(1, ops.length - 1)
-})
-
-const leftPlayers = computed(() => {
-  const ops = opponents.value
-  if (ops.length === 0) return []
-  return [ops[0]]
-})
-
-const rightPlayers = computed(() => {
-  const ops = opponents.value
-  if (ops.length < 2) return []
-  return [ops[ops.length - 1]]
-})
+const gameLog = computed(() =>
+    state.gameState?.log ?? state.gameState?.Log ?? []
+)
 
 const validTargets = computed(() => {
   if (!selectedCard.value) return []
@@ -287,11 +261,11 @@ function getPlayerName(id) {
 }
 
 function discardStyle(index, total) {
-  const spread = Math.min(total * 28, 120)
+  const spread = Math.min(total * 22, 112)
   const start = -spread / 2
   const step = total > 1 ? spread / (total - 1) : 0
   return {
-    transform: `translateX(${start + index * step}px) rotate(${(index - (total - 1) / 2) * 4}deg)`,
+    transform: `translateX(${start + index * step}px) rotate(${(index - (total - 1) / 2) * 3}deg)`,
     zIndex: index,
   }
 }
@@ -316,57 +290,88 @@ async function confirmChancellor() {
   await resolveChancellor(selectedChancellorCard.value)
   selectedChancellorCard.value = null
 }
+
+function openLeaveConfirm() {
+  leaveConfirmOpen.value = true
+}
+
+async function confirmLeave() {
+  leaveConfirmOpen.value = false
+  await leaveGame()
+}
 </script>
 
 <style scoped>
-/* ── Layout ── */
 .game-table {
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  height: calc(100dvh - 2rem);
   background: radial-gradient(ellipse at center, #1a0a0a 0%, #0d0404 100%);
+  color: #fee2e2;
   display: grid;
   grid-template-areas:
-    ". top ."
-    "left center right"
-    ". bottom .";
-  grid-template-rows: auto 1fr auto;
-  grid-template-columns: 180px 1fr 180px;
+    "opponents"
+    "center"
+    "player";
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(120px, 0.8fr) auto;
+  gap: 10px;
+  padding: 10px 14px;
+  overflow-x: hidden;
+  overflow-y: hidden;
   position: relative;
-  overflow: hidden;
 }
 
-/* subtle felt texture */
 .game-table::before {
   content: '';
   position: absolute;
   inset: 0;
-  background-image: radial-gradient(circle at 1px 1px, rgba(255,255,255,0.015) 1px, transparent 0);
+  background-image: radial-gradient(circle at 1px 1px, rgba(255,255,255,0.018) 1px, transparent 0);
   background-size: 24px 24px;
   pointer-events: none;
 }
 
-/* ── Seats ── */
-.seat { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 12px; }
-.seat-top  { grid-area: top; }
-.seat-left { grid-area: left; flex-direction: column; }
-.seat-right { grid-area: right; flex-direction: column; }
+.opponents-bar,
+.table-center,
+.my-area,
+.log-panel,
+.leave-game-btn {
+  position: relative;
+  z-index: 1;
+}
 
-/* ── Table center ── */
+.opponents-bar {
+  grid-area: opponents;
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 0 150px 4px;
+  justify-content: center;
+  min-width: 0;
+  scrollbar-width: thin;
+}
+
 .table-center {
   grid-area: center;
+  min-height: 120px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
-  position: relative;
+  gap: 10px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.025);
+  border-radius: 8px;
+  padding: 12px;
 }
 
-/* ── Pile area ── */
 .pile-area {
   display: flex;
-  gap: 32px;
+  gap: 36px;
   align-items: flex-end;
+  justify-content: center;
+  transform: scale(0.86);
+  transform-origin: center;
+  margin: -4px 0 -6px;
 }
 
 .card-back-stack {
@@ -393,231 +398,396 @@ async function confirmChancellor() {
 
 .pile-count {
   position: absolute;
-  bottom: -20px;
+  bottom: -22px;
   left: 50%;
   transform: translateX(-50%);
-  font-size: 11px;
-  color: #9f8070;
+  font-size: 12px;
+  color: #fecdd3;
   white-space: nowrap;
 }
 
-/* ── Turn banner ── */
 .turn-banner {
+  max-width: min(100%, 420px);
   font-size: 13px;
-  font-weight: 600;
-  color: #fda4af;
-  letter-spacing: 0.05em;
+  font-weight: 700;
+  color: #ffe4e6;
   text-transform: uppercase;
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 999px;
-  padding: 6px 18px;
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  padding: 7px 14px;
+  text-align: center;
 }
 
-.tokens-info {
-  font-size: 12px;
-  color: #9f8070;
-  display: flex;
-  align-items: center;
-  gap: 4px;
+.tokens-info,
+.waiting-msg,
+.eliminated-msg {
+  font-size: 13px;
+  color: #fda4af;
 }
 
-/* ── Priest bubble ── */
 .priest-bubble {
-  background: rgba(88, 28, 135, 0.85);
-  border: 1px solid #a855f7;
-  border-radius: 12px;
+  background: rgba(88, 28, 135, 0.86);
+  border: 1px solid #c084fc;
+  border-radius: 8px;
   padding: 10px 16px;
   font-size: 13px;
-  color: #e9d5ff;
+  color: #f3e8ff;
   display: flex;
   align-items: center;
   gap: 8px;
-  backdrop-filter: blur(8px);
 }
 
-/* ── My area ── */
 .my-area {
-  grid-area: bottom;
-  display: flex;
-  flex-direction: column;
+  grid-area: player;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    "info"
+    "hand"
+    "status";
   align-items: center;
-  gap: 8px;
-  padding: 16px;
-  padding-bottom: 24px;
+  justify-content: center;
+  gap: 8px 18px;
+  padding: 10px 14px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(0,0,0,0.24);
+  border-radius: 8px;
+  min-width: 0;
+  position: relative;
+}
+
+.my-area--acting {
+  grid-template-columns: minmax(150px, 220px) minmax(270px, auto) minmax(240px, 320px);
+  grid-template-areas:
+    "info info info"
+    "discards hand action";
 }
 
 .my-info-bar {
+  grid-area: info;
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
   font-size: 13px;
-  color: #fda4af;
+  color: #ffe4e6;
 }
 
-.my-name { font-weight: 700; }
+.my-name {
+  font-weight: 700;
+}
 
-.my-tokens { display: flex; gap: 4px; }
+.my-tokens {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
 .token-dot {
-  width: 10px; height: 10px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  border: 1.5px solid #9f1239;
+  border: 1.5px solid #fb7185;
   background: transparent;
-  transition: background 0.3s;
 }
-.token-dot.filled { background: #f43f5e; }
+
+.token-dot.filled {
+  background: #fb7185;
+}
 
 .shield-badge {
   font-size: 11px;
   background: rgba(56, 189, 248, 0.15);
   border: 1px solid #38bdf8;
-  color: #7dd3fc;
-  border-radius: 999px;
-  padding: 2px 8px;
+  color: #bae6fd;
+  border-radius: 8px;
+  padding: 3px 8px;
 }
 
-/* ── Discard pile (fanned) ── */
 .my-discards {
-  position: relative;
-  height: 72px;
-  width: 100%;
+  position: absolute;
+  left: clamp(24px, 28%, 520px);
+  bottom: 70px;
+  height: 96px;
+  width: 150px;
   display: flex;
   justify-content: center;
+  pointer-events: none;
 }
 
 .discard-card {
   position: absolute;
+  top: 0;
+  left: 50%;
+  margin-left: -32px;
   transition: transform 0.3s ease;
 }
 
-/* ── Hand cards ── */
 .my-hand {
+  grid-area: hand;
   display: flex;
-  gap: 24px;
+  gap: 14px;
   align-items: flex-end;
+  justify-content: center;
+  flex-wrap: wrap;
+  width: 100%;
+  transition: transform 0.22s ease;
 }
 
-.hand-card {
-  cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+.my-area--acting .my-hand {
+  justify-content: flex-start;
+}
+
+.my-area--acting .my-discards {
+  grid-area: discards;
   position: relative;
-  border-radius: 12px;
+  left: auto;
+  bottom: auto;
+  width: min(100%, 220px);
+  pointer-events: auto;
 }
 
-.hand-card:hover {
-  transform: translateY(-12px);
+.waiting-msg,
+.eliminated-msg {
+  grid-area: status;
+  justify-self: center;
+  text-align: center;
 }
 
-.hand-card--selected {
-  transform: translateY(-20px);
-  box-shadow: 0 0 0 3px #f43f5e, 0 8px 32px rgba(244, 63, 94, 0.4);
+.hand-card,
+.chancellor-card-option {
+  position: relative;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.hand-card:hover,
+.chancellor-card-option:hover {
+  transform: translateY(-8px);
+}
+
+.hand-card--disabled {
+  cursor: default;
+  opacity: 0.82;
+}
+
+.hand-card--disabled:hover {
+  transform: none;
+}
+
+.hand-card--selected,
+.chancellor-card-option.selected {
+  transform: translateY(-10px);
+  box-shadow: 0 0 0 3px #fb7185, 0 8px 28px rgba(244, 63, 94, 0.35);
 }
 
 .hand-card--drawn::after {
   content: '';
   position: absolute;
   inset: -3px;
-  border-radius: 14px;
-  background: transparent;
-  border: 2px dashed rgba(251, 191, 36, 0.5);
+  border-radius: 10px;
+  border: 2px dashed rgba(251, 191, 36, 0.6);
   pointer-events: none;
-  animation: pulse-border 1.5s ease infinite;
-}
-
-@keyframes pulse-border {
-  0%, 100% { opacity: 0.5; }
-  50% { opacity: 1; }
 }
 
 .card-label {
-  position: absolute;
-  bottom: -20px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 10px;
-  color: #9f8070;
-  white-space: nowrap;
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  color: #fecdd3;
+  text-align: center;
 }
 
-.card-label--new { color: #fbbf24; }
+.card-label--new {
+  color: #fde68a;
+}
 
-/* ── Action panel ── */
 .action-panel {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-  background: rgba(0,0,0,0.6);
-  border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 16px;
-  padding: 14px 20px;
-  backdrop-filter: blur(12px);
-  width: 100%;
-  max-width: 480px;
+  grid-area: action;
+  display: grid;
+  gap: 12px;
+  background: rgba(0,0,0,0.38);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  padding: 14px;
+  width: min(100%, 320px);
+  justify-self: start;
+  align-self: center;
+}
+
+.choice-row {
+  display: grid;
+  grid-template-columns: 64px repeat(3, minmax(64px, 1fr));
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
 }
 
 .action-label {
   font-size: 11px;
-  color: #9f8070;
+  color: #fecdd3;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  margin-right: 8px;
-}
-
-.target-row, .guess-row {
+  font-weight: 700;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  width: 100%;
+  justify-content: center;
+  min-width: 0;
 }
 
-.target-btn, .guess-btn {
+.choice-btn {
   font-size: 12px;
-  padding: 5px 12px;
-  border-radius: 999px;
-  border: 1px solid #9f1239;
-  background: transparent;
-  color: #fda4af;
+  min-width: 0;
+  min-height: 38px;
+  padding: 6px;
+  border-radius: 6px;
+  border: 1px solid #be123c;
+  background: rgba(159, 18, 57, 0.18);
+  color: #ffe4e6;
   cursor: pointer;
-  transition: all 0.15s;
+  max-width: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
 }
 
-.target-btn:hover, .guess-btn:hover {
-  background: rgba(159, 18, 57, 0.3);
-}
-
-.target-btn--active, .guess-btn--active {
-  background: #9f1239;
+.choice-btn--active {
+  background: #be123c;
+  border-color: #fb7185;
   color: white;
-  border-color: #f43f5e;
 }
 
-.no-targets { font-size: 12px; color: #6b3030; font-style: italic; }
+.no-targets {
+  font-size: 12px;
+  color: #fb7185;
+}
 
 .confirm-btn {
-  width: 100%;
-  max-width: 280px;
-  padding: 12px;
-  border-radius: 12px;
-  background: #9f1239;
+  width: auto;
+  min-width: 152px;
+  justify-self: center;
+  padding: 11px 14px;
+  border-radius: 8px;
+  background: #be123c;
   color: white;
   font-weight: 700;
   font-size: 14px;
   border: none;
   cursor: pointer;
-  transition: background 0.2s;
 }
 
-.confirm-btn:hover:not(:disabled) { background: #be123c; }
-.confirm-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.confirm-btn:hover:not(:disabled) {
+  background: #e11d48;
+}
 
-/* ── Chancellor overlay ── */
-.chancellor-overlay {
+.confirm-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.leave-game-btn {
   position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 20;
+  min-width: 116px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(0,0,0,0.28);
+  color: #fecdd3;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.22);
+  transition: background 0.16s ease, border-color 0.16s ease;
+}
+
+.leave-game-btn:hover {
+  background: rgba(159, 18, 57, 0.34);
+  border-color: rgba(251, 113, 133, 0.34);
+}
+
+.log-panel {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 20;
+  width: 132px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(0,0,0,0.28);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.28);
+  transition: width 0.2s ease, background 0.2s ease;
+}
+
+.log-panel--open {
+  width: min(340px, calc(100% - 28px));
+  background: rgba(10, 2, 2, 0.94);
+}
+
+.log-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: rgba(255,255,255,0.06);
+  border: 0;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  color: #fecdd3;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 10px 12px;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+}
+
+.log-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  border-radius: 8px;
+  background: rgba(251, 113, 133, 0.18);
+  color: #ffe4e6;
+  font-size: 11px;
+}
+
+.log-entries {
+  max-height: min(320px, calc(100dvh - 110px));
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.log-entry {
+  font-size: 12px;
+  color: #fecdd3;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.log-entry--empty {
+  color: #fda4af;
+  font-style: italic;
+}
+
+.chancellor-overlay {
+  position: fixed;
   inset: 0;
-  background: rgba(10, 2, 2, 0.92);
-  backdrop-filter: blur(8px);
+  background: rgba(10, 2, 2, 0.94);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -625,93 +795,334 @@ async function confirmChancellor() {
   gap: 16px;
   z-index: 50;
   padding: 24px;
+  overflow-y: auto;
+}
+
+.leave-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(10, 2, 2, 0.72);
+  backdrop-filter: blur(6px);
+}
+
+.leave-modal {
+  width: min(100%, 360px);
+  border: 1px solid rgba(251, 113, 133, 0.28);
+  background:
+    radial-gradient(circle at top, rgba(159, 18, 57, 0.34), transparent 58%),
+    rgba(20, 5, 8, 0.96);
+  border-radius: 8px;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.55);
+  padding: 20px;
+  text-align: center;
+}
+
+.leave-modal-title {
+  margin: 0;
+  color: #ffe4e6;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.leave-modal-copy {
+  margin: 10px 0 18px;
+  color: #fecdd3;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.leave-modal-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.modal-btn {
+  border-radius: 8px;
+  min-height: 42px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  border: 1px solid rgba(251, 113, 133, 0.28);
+}
+
+.modal-btn--quiet {
+  color: #fecdd3;
+  background: rgba(255,255,255,0.05);
+}
+
+.modal-btn--danger {
+  color: white;
+  background: #be123c;
+  border-color: #fb7185;
+}
+
+.modal-btn--quiet:hover {
+  background: rgba(255,255,255,0.09);
+}
+
+.modal-btn--danger:hover {
+  background: #e11d48;
 }
 
 .chancellor-title {
   font-size: 20px;
   font-weight: 700;
-  color: #fda4af;
+  color: #ffe4e6;
+  margin: 0;
 }
 
 .chancellor-sub {
   font-size: 13px;
-  color: #9f8070;
+  color: #fecdd3;
+  margin: 0;
+  text-align: center;
 }
 
 .chancellor-cards {
   display: flex;
-  gap: 24px;
+  gap: 18px;
   flex-wrap: wrap;
   justify-content: center;
 }
 
-.chancellor-card-option {
-  cursor: pointer;
-  border-radius: 12px;
-  transition: transform 0.2s, box-shadow 0.2s;
+.fade-enter-active,
+.fade-leave-active,
+.slide-up-enter-active,
+.slide-up-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
-.chancellor-card-option:hover { transform: translateY(-8px); }
-.chancellor-card-option.selected {
-  transform: translateY(-12px);
-  box-shadow: 0 0 0 3px #f43f5e, 0 8px 32px rgba(244,63,94,0.4);
+.fade-enter-from,
+.fade-leave-to,
+.slide-up-enter-from,
+.slide-up-leave-to {
+  opacity: 0;
+  transform: translateY(10px);
 }
 
-/* ── Log panel ── */
-.log-panel {
-  position: fixed;
-  bottom: 0;
-  right: 16px;
-  width: 280px;
-  z-index: 40;
+.pop-enter-active {
+  transition: all 0.2s ease;
 }
 
-.log-toggle {
-  background: rgba(30, 8, 8, 0.9);
-  border: 1px solid rgba(255,255,255,0.1);
-  border-bottom: none;
-  color: #9f8070;
-  font-size: 11px;
-  padding: 6px 14px;
-  border-radius: 8px 8px 0 0;
-  cursor: pointer;
-  width: 100%;
-  text-align: left;
-  transition: color 0.2s;
+.pop-leave-active {
+  transition: all 0.15s ease;
 }
 
-.log-toggle:hover { color: #fda4af; }
-
-.log-entries {
-  background: rgba(10, 2, 2, 0.95);
-  border: 1px solid rgba(255,255,255,0.08);
-  border-bottom: none;
-  max-height: 200px;
-  overflow-y: auto;
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.pop-enter-from,
+.pop-leave-to {
+  opacity: 0;
+  transform: scale(0.96);
 }
 
-.log-entry {
-  font-size: 11px;
-  color: #7c5050;
-  line-height: 1.5;
+@media (min-width: 901px) {
+  :deep(.card-face--lg) {
+    width: 128px;
+    height: 180px;
+  }
+
+  :deep(.card-face--lg .card-art-icon) {
+    font-size: 40px;
+  }
+
+  :deep(.card-face--lg .card-name) {
+    font-size: 10px;
+    padding: 3px 6px;
+  }
+
+  :deep(.card-face--lg .card-desc) {
+    font-size: 8px;
+    line-height: 1.25;
+    padding: 0 6px 6px;
+  }
 }
 
-/* ── Waiting / eliminated ── */
-.waiting-msg { font-size: 13px; color: #7c5050; font-style: italic; }
-.eliminated-msg { font-size: 13px; color: #6b3030; }
+@media (min-width: 760px) and (max-height: 820px) {
+  .game-table {
+    grid-template-rows: auto minmax(118px, 0.7fr) auto;
+    gap: 8px;
+    padding: 10px;
+  }
 
-/* ── Transitions ── */
-.fade-enter-active, .fade-leave-active { transition: opacity 0.3s; }
-.fade-enter-from, .fade-leave-to { opacity: 0; }
+  .opponents-bar {
+    gap: 8px;
+    padding-top: 0;
+    padding-bottom: 4px;
+  }
 
-.slide-up-enter-active, .slide-up-leave-active { transition: all 0.3s ease; }
-.slide-up-enter-from, .slide-up-leave-to { opacity: 0; transform: translateY(20px); }
+  .table-center {
+    min-height: 118px;
+    gap: 8px;
+    padding: 10px;
+  }
 
-.pop-enter-active { transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1); }
-.pop-leave-active { transition: all 0.2s ease; }
-.pop-enter-from, .pop-leave-to { opacity: 0; transform: scale(0.8); }
+  .pile-area {
+    transform: scale(0.72);
+    transform-origin: center;
+    margin: -12px 0 -10px;
+  }
+
+  .turn-banner {
+    font-size: 12px;
+    padding: 6px 12px;
+  }
+
+  .tokens-info {
+    font-size: 12px;
+  }
+
+  .my-info-bar {
+    align-self: end;
+  }
+
+  .discard-card {
+    margin-left: -24px;
+  }
+
+  .my-area--acting .my-hand {
+    gap: 12px;
+    align-items: end;
+    justify-content: flex-start;
+  }
+
+  .card-label {
+    margin-top: 4px;
+  }
+
+  .action-panel {
+    align-self: center;
+    width: min(100%, 300px);
+    padding: 12px;
+    gap: 8px;
+  }
+
+  .choice-row {
+    grid-template-columns: 58px repeat(3, minmax(58px, 1fr));
+    gap: 6px;
+  }
+
+  .choice-btn {
+    min-height: 34px;
+    padding: 5px;
+  }
+
+  .confirm-btn {
+    min-width: 140px;
+    padding: 9px 12px;
+  }
+
+  :deep(.card-face--sm) {
+    width: 48px;
+    height: 68px;
+  }
+
+  :deep(.card-face--sm .card-name),
+  :deep(.card-face--sm .card-abbr) {
+    display: none;
+  }
+}
+
+@media (min-width: 901px) and (max-width: 1120px) {
+  .my-area--acting {
+    grid-template-columns: minmax(210px, auto) minmax(300px, 520px);
+    grid-template-areas:
+      "info info"
+      "hand action"
+      "discards action";
+  }
+
+  .my-area--acting .my-hand {
+    justify-content: center;
+  }
+}
+
+@media (max-width: 900px) {
+  .game-table {
+    height: auto;
+    min-height: calc(100dvh - 2rem);
+    grid-template-areas:
+      "opponents"
+      "center"
+      "player";
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+    overflow-y: auto;
+  }
+
+  .table-center {
+    min-height: 170px;
+  }
+
+  .my-area {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .my-discards {
+    position: relative;
+    left: auto;
+    bottom: auto;
+    pointer-events: auto;
+  }
+
+  .log-panel {
+    top: 10px;
+    left: 10px;
+  }
+
+  .leave-game-btn {
+    top: 10px;
+    right: 10px;
+  }
+
+  .log-panel--open {
+    width: min(320px, calc(100% - 20px));
+  }
+
+  .log-entries {
+    max-height: 220px;
+  }
+}
+
+@media (max-width: 560px) {
+  .game-table {
+    padding: 10px;
+    gap: 10px;
+  }
+
+  .opponents-bar {
+    justify-content: flex-start;
+    padding-left: 118px;
+    padding-right: 118px;
+  }
+
+  .pile-area {
+    transform: scale(0.9);
+    transform-origin: center;
+  }
+
+  .my-area {
+    padding: 12px 8px;
+  }
+
+  .action-panel {
+    padding: 10px;
+  }
+
+  .choice-row {
+    grid-template-columns: 1fr 1fr;
+    align-items: stretch;
+  }
+
+  .action-label {
+    width: 100%;
+    grid-column: 1 / -1;
+  }
+}
 </style>

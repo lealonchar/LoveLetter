@@ -11,6 +11,7 @@ public class GameHub : Hub
 {
     private readonly RoomManager _rooms;
     private readonly GameEngine _engine;
+    private const int MaxAiTurnsPerRun = 100;
     private static readonly Dictionary<string, Dictionary<string, AiPlayer>> AiPlayers = new();
 
     public GameHub(RoomManager rooms, GameEngine engine)
@@ -23,12 +24,16 @@ public class GameHub : Hub
 
     public override async Task OnDisconnectedAsync(Exception? ex)
     {
-        var room = _rooms.GetRoomByPlayer(Context.ConnectionId);
+        var room = _rooms.DisconnectPlayer(Context.ConnectionId);
         if (room != null)
         {
-            _rooms.RemovePlayer(Context.ConnectionId);
             await Groups.RemoveFromGroupAsync(Context.ConnectionId, room.Code);
-            await BroadcastState(room);
+
+            if (room.Players.Count > 0)
+            {
+                await BroadcastState(room);
+            }
+
             await Clients.Group(room.Code)
                 .SendAsync("PlayerLeft", Context.ConnectionId);
         }
@@ -37,26 +42,94 @@ public class GameHub : Hub
 
     // Lobby 
 
-    public async Task CreateRoom(string playerName)
+    public async Task CreateRoom(string playerName, string playerId)
     {
-        var room = _rooms.CreateRoom(Context.ConnectionId, playerName);
+        var room = _rooms.CreateRoom(playerId, Context.ConnectionId, playerName);
         await Groups.AddToGroupAsync(Context.ConnectionId, room.Code);
         await Clients.Caller.SendAsync("RoomCreated", room.Code);
         await BroadcastState(room);
     }
 
-    public async Task JoinRoom(string code, string playerName)
+    public async Task JoinRoom(string code, string playerName, string playerId)
     {
-        var (room, error) = _rooms.JoinRoom(code, Context.ConnectionId, playerName);
+        var (room, error) = _rooms.JoinRoom(code, playerId, Context.ConnectionId, playerName);
         if (error != null) { await Clients.Caller.SendAsync("Error", error); return; }
 
         await Groups.AddToGroupAsync(Context.ConnectionId, room!.Code);
         await BroadcastState(room);
     }
 
+    public async Task ReconnectToRoom(string roomCode, string playerId)
+    {
+        var (room, _, error) = _rooms.ReconnectPlayer(roomCode, playerId, Context.ConnectionId);
+        if (error != null) { await Clients.Caller.SendAsync("ReconnectFailed", error); return; }
+
+        await Groups.AddToGroupAsync(Context.ConnectionId, room!.Code);
+        await BroadcastState(room);
+    }
+
+    public async Task LeaveRoom()
+    {
+        var room = _rooms.GetRoomByPlayer(Context.ConnectionId);
+        var player = _rooms.GetPlayerByConnection(Context.ConnectionId);
+        if (room == null || player == null)
+        {
+            await Clients.Caller.SendAsync("LeftRoom");
+            return;
+        }
+
+        var roomCode = room.Code;
+        var removedIndex = room.Players.FindIndex(p => p.Id == player.Id);
+        var currentIndex = room.CurrentPlayerIndex;
+        var wasCurrentPlayer = room.CurrentPlayer?.Id == player.Id;
+        var wasPendingChancellor = room.ChancellorPlayerId == player.Id;
+
+        var (updatedRoom, removedPlayer) = _rooms.RemovePlayer(Context.ConnectionId);
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, roomCode);
+        await Clients.Caller.SendAsync("LeftRoom");
+
+        if (updatedRoom == null ||
+            removedPlayer == null ||
+            updatedRoom.Players.Count == 0 ||
+            updatedRoom.Players.All(p => p.IsAi))
+            return;
+
+        if (updatedRoom.Phase == GamePhase.Playing)
+        {
+            RepositionCurrentPlayer(updatedRoom, removedIndex, currentIndex, wasCurrentPlayer);
+
+            if (wasPendingChancellor)
+            {
+                foreach (var card in updatedRoom.ChancellorOptions)
+                    updatedRoom.DrawPile.Add(card);
+                ClearPendingChancellor(updatedRoom);
+            }
+
+            if (wasCurrentPlayer)
+            {
+                updatedRoom.DrawnCard = null;
+                _engine.CheckRoundEnd(updatedRoom);
+                if (updatedRoom.Phase == GamePhase.Playing)
+                    _engine.BeginTurn(updatedRoom);
+            }
+            else
+            {
+                _engine.CheckRoundEnd(updatedRoom);
+            }
+        }
+
+        updatedRoom.Log.Add($"{removedPlayer.Name} left the game.");
+        await BroadcastState(updatedRoom);
+        await Clients.Group(roomCode).SendAsync("PlayerLeft", removedPlayer.Id);
+        await RunAiTurn(updatedRoom);
+    }
+
     public async Task AddAiPlayer(string roomCode)
     {
-        var (room, error) = _rooms.AddAiPlayer(roomCode, Context.ConnectionId);
+        var requester = _rooms.GetPlayerByConnection(Context.ConnectionId);
+        if (requester == null) { await Clients.Caller.SendAsync("Error", "Player not found."); return; }
+
+        var (room, error) = _rooms.AddAiPlayer(roomCode, requester.Id);
         if (error != null) { await Clients.Caller.SendAsync("Error", error); return; }
 
         var aiPlayer = room!.Players.Last(p => p.IsAi);
@@ -67,16 +140,28 @@ public class GameHub : Hub
         await BroadcastState(room);
     }
 
+    public async Task RenameAiPlayer(string roomCode, string aiPlayerId, string name)
+    {
+        var requester = _rooms.GetPlayerByConnection(Context.ConnectionId);
+        if (requester == null) { await Clients.Caller.SendAsync("Error", "Player not found."); return; }
+
+        var (room, error) = _rooms.RenameAiPlayer(roomCode, requester.Id, aiPlayerId, name);
+        if (error != null) { await Clients.Caller.SendAsync("Error", error); return; }
+
+        await BroadcastState(room!);
+    }
+
     public async Task StartGame(string roomCode)
     {
         var room = _rooms.GetRoomByCode(roomCode);
-        if (room == null || room.HostId != Context.ConnectionId)
+        var requester = _rooms.GetPlayerByConnection(Context.ConnectionId);
+        if (room == null || requester == null || room.HostId != requester.Id)
         { await Clients.Caller.SendAsync("Error", "Only the host can start the game."); return; }
         if (room.Players.Count < 3)
         { await Clients.Caller.SendAsync("Error", "Need at least 3 players."); return; }
 
         StartRound(room);
-        _engine.BeginTurn(room);
+        _engine.BeginTurn(room); // ← deal drawn card to first player
         await BroadcastState(room);
         await RunAiTurn(room);
     }
@@ -89,8 +174,8 @@ public class GameHub : Hub
         var room = _rooms.GetRoomByCode(roomCode);
         if (room == null) { await Clients.Caller.SendAsync("Error", "Room not found."); return; }
 
-        var player = room.Players.FirstOrDefault(p => p.Id == Context.ConnectionId);
-        if (player == null || room.CurrentPlayer?.Id != Context.ConnectionId)
+        var player = _rooms.GetPlayerByConnection(Context.ConnectionId);
+        if (player == null || room.CurrentPlayer?.Id != player.Id)
         { await Clients.Caller.SendAsync("Error", "It's not your turn."); return; }
 
         if (!Enum.TryParse<CardType>(cardType, out var ct))
@@ -100,7 +185,7 @@ public class GameHub : Hub
 
         try
         {
-            _engine.PlayCard(room, Context.ConnectionId, ct, targetId, guess);
+            _engine.PlayCard(room, player.Id, ct, targetId, guess);
         }
         catch (Exception ex)
         {
@@ -109,10 +194,10 @@ public class GameHub : Hub
         }
 
         // If Priest was played, send the target's card privately to the actor
-        if (ct == CardType.Priest && targetId != null)
+        if (ct == CardType.Priest && targetId != null && targetId != player.Id)
         {
             var target = room.Players.FirstOrDefault(p => p.Id == targetId);
-            if (target?.Hand != null)
+            if (target is { Hand: not null, IsEliminated: false, IsProtected: false })
                 await Clients.Caller.SendAsync("PriestReveal", targetId, target.Hand.Type.ToString());
         }
 
@@ -122,11 +207,12 @@ public class GameHub : Hub
     public async Task StartNextRound(string roomCode)
     {
         var room = _rooms.GetRoomByCode(roomCode);
-        if (room == null || room.HostId != Context.ConnectionId) return;
+        var requester = _rooms.GetPlayerByConnection(Context.ConnectionId);
+        if (room == null || requester == null || room.HostId != requester.Id) return;
         if (room.Phase != GamePhase.RoundOver) return;
 
         StartRound(room);
-        _engine.BeginTurn(room);
+        _engine.BeginTurn(room); // ← deal drawn card to first player
         await BroadcastState(room);
         await RunAiTurn(room);
     }
@@ -152,16 +238,14 @@ public class GameHub : Hub
             return;
         }
 
-        if (room.PendingAction == "Chancellor")
+        // Wait for Chancellor resolution before advancing
+        if (room.PendingAction == GameEngine.ChancellorPendingAction)
         {
             await BroadcastState(room);
             return;
         }
 
-
-        if (room.DrawPile.Count == 0) { _engine.CheckRoundEnd(room); await BroadcastState(room); return; }
         _engine.BeginTurn(room);
-
         await BroadcastState(room);
         await RunAiTurn(room);
     }
@@ -172,35 +256,24 @@ public class GameHub : Hub
         int safety = 0;
         while (room.Phase == GamePhase.Playing &&
                room.CurrentPlayer?.IsAi == true &&
-               safety++ < 20)
+               safety++ < MaxAiTurnsPerRun)
         {
             await Task.Delay(800);
 
             var ai = room.CurrentPlayer;
-            
-            if (room.PendingAction == "Chancellor" && room.ChancellorPlayerId == ai.Id)
+            if (ai == null || ai.IsEliminated)
+                break;
+
+            if (room.DrawnCard == null)
             {
-                var best = room.ChancellorOptions.OrderByDescending(c => c.Value).First();
-                var returns = room.ChancellorOptions.Where(c => c != best).ToList();
-                ai.Hand = best;
-                foreach (var c in returns) room.DrawPile.Add(c);
-                room.ChancellorOptions.Clear();
-                room.ChancellorPlayerId = null;
-                room.PendingAction = null;
-                room.Log.Add($"{ai.Name} kept a card and returned {returns.Count} to the bottom of the deck.");
-
-                if (room.DrawPile.Count == 0) { _engine.CheckRoundEnd(room); break; }
                 _engine.BeginTurn(room);
-                continue;
+                if (room.Phase is GamePhase.RoundOver or GamePhase.GameOver || room.DrawnCard == null)
+                    break;
             }
-
-            if (room.PendingAction != null) break; // unknown pending action, bail
 
             if (!AiPlayers.TryGetValue(room.Code, out var roomAis) ||
                 !roomAis.TryGetValue(ai.Id, out var aiLogic))
                 break;
-
-            if (room.DrawnCard == null) break;
 
             var (card, target, guess) = aiLogic.DecideAction(room, ai);
 
@@ -210,17 +283,42 @@ public class GameHub : Hub
             }
             catch
             {
-                if (room.DrawnCard != null)
-                    _engine.PlayCard(room, ai.Id, room.DrawnCard.Type, null, null);
-                else
+                if (room.DrawnCard == null)
                     break;
+
+                try
+                {
+                    _engine.PlayCard(room, ai.Id, room.DrawnCard.Type, null, null);
+                }
+                catch
+                {
+                    room.Log.Add($"{ai.Name} could not play a valid card and skipped their turn.");
+                    room.DrawnCard = null;
+                    _engine.AdvanceTurn(room);
+                    if (room.Phase == GamePhase.Playing)
+                        _engine.BeginTurn(room);
+                    await BroadcastState(room);
+                    continue;
+                }
             }
 
-            if (room.Phase is GamePhase.RoundOver or GamePhase.GameOver)
-                break;
+            if (room.Phase is GamePhase.RoundOver or GamePhase.GameOver) break;
 
-            if (room.DrawPile.Count == 0) { _engine.CheckRoundEnd(room); break; }
+            // AI resolves Chancellor automatically
+            if (room.PendingAction == GameEngine.ChancellorPendingAction)
+            {
+                var best = room.ChancellorOptions.OrderByDescending(c => c.Value).First();
+                ResolveChancellorChoice(room, ai, best);
+
+                if (room.Phase is GamePhase.RoundOver or GamePhase.GameOver) break;
+                _engine.AdvanceTurn(room);
+                _engine.BeginTurn(room);
+                await BroadcastState(room);
+                continue;
+            }
+
             _engine.BeginTurn(room);
+            await BroadcastState(room);
         }
 
         await BroadcastState(room);
@@ -232,39 +330,72 @@ public class GameHub : Hub
     {
         foreach (var player in room.Players.Where(p => !p.IsAi))
         {
+            if (player.ConnectionId == null) continue;
             var dto = BuildStateDto(room, player.Id);
-            await Clients.Client(player.Id).SendAsync("GameStateUpdated", dto);
+            await Clients.Client(player.ConnectionId).SendAsync("GameStateUpdated", dto);
         }
     }
     
     public async Task ResolveChancellor(string roomCode, string cardTypeToKeep)
     {
         var room = _rooms.GetRoomByCode(roomCode);
-        if (room == null || room.PendingAction != "Chancellor") return;
-        if (room.ChancellorPlayerId != Context.ConnectionId) return;
+        if (room == null || room.PendingAction != GameEngine.ChancellorPendingAction) return;
+        var player = _rooms.GetPlayerByConnection(Context.ConnectionId);
+        if (player == null || room.ChancellorPlayerId != player.Id) return;
 
         if (!Enum.TryParse<CardType>(cardTypeToKeep, out var keep)) return;
 
-        var player = room.Players.First(p => p.Id == Context.ConnectionId);
         var kept = room.ChancellorOptions.FirstOrDefault(c => c.Type == keep);
         if (kept == null)
         {
             await Clients.Caller.SendAsync("Error", "Invalid card choice.");
             return;
         }
+        ResolveChancellorChoice(room, player, kept);
+
+        _engine.AdvanceTurn(room);
+        await HandlePostPlay(room);
+    }
+
+    private static void ResolveChancellorChoice(GameRoom room, Player player, Card kept)
+    {
         var returns = room.ChancellorOptions.Where(c => c != kept).ToList();
 
         player.Hand = kept;
-        foreach (var c in returns)
-            room.DrawPile.Add(c); // return to bottom
+        foreach (var card in returns)
+            room.DrawPile.Add(card);
 
+        ClearPendingChancellor(room);
+        room.Log.Add($"{player.Name} kept a card and returned {returns.Count} to the bottom of the deck.");
+    }
+
+    private static void ClearPendingChancellor(GameRoom room)
+    {
         room.ChancellorOptions.Clear();
         room.ChancellorPlayerId = null;
         room.PendingAction = null;
+    }
 
-        room.Log.Add($"{player.Name} kept a card and returned {returns.Count} to the bottom of the deck.");
+    private static void RepositionCurrentPlayer(GameRoom room, int removedIndex, int previousCurrentIndex, bool wasCurrentPlayer)
+    {
+        if (room.Players.Count == 0)
+        {
+            room.CurrentPlayerIndex = 0;
+            return;
+        }
 
-        await HandlePostPlay(room);
+        if (removedIndex < 0)
+        {
+            room.CurrentPlayerIndex = Math.Clamp(room.CurrentPlayerIndex, 0, room.Players.Count - 1);
+            return;
+        }
+
+        if (wasCurrentPlayer)
+            room.CurrentPlayerIndex = removedIndex >= room.Players.Count ? 0 : removedIndex;
+        else if (removedIndex < previousCurrentIndex)
+            room.CurrentPlayerIndex = Math.Max(0, previousCurrentIndex - 1);
+        else if (previousCurrentIndex >= room.Players.Count)
+            room.CurrentPlayerIndex = 0;
     }
 
     private GameStateDto BuildStateDto(GameRoom room, string viewerId)
@@ -290,6 +421,7 @@ public class GameHub : Hub
 
         return new GameStateDto(
             room.Code, room.Phase,
+            room.HostId,
             players,
             room.DrawPile.Count,
             room.CurrentPlayerIndex,

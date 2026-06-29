@@ -6,6 +6,7 @@ namespace LoveLetter.Domain.Dto;
 public record GameStateDto(
     string RoomCode,
     GamePhase Phase,
+    string HostId,
     List<PlayerDto> Players,
     int DrawPileCount,
     int CurrentPlayerId_Index,

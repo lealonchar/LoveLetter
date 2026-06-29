@@ -18,9 +18,10 @@ builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
     {
-        // In production, replace with your Vercel frontend URL
-        var origins = builder.Configuration["AllowedOrigins"]?.Split(',')
-            ?? ["http://localhost:5173"];
+        var origins = (builder.Configuration["AllowedOrigins"] ?? "http://localhost:5173")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(origin => origin.TrimEnd('/'))
+            .ToArray();
 
         policy.WithOrigins(origins)
               .AllowAnyHeader()

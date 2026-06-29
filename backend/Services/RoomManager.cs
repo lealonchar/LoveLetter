@@ -13,6 +13,12 @@ public class RoomManager
 
     private static readonly Random Rng = new();
     private const string Chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I ambiguity
+    private static readonly string[] AiNames =
+    [
+        "Ada", "Bea", "Cleo", "Dante", "Elio", "Flora", "Galen", "Hana",
+        "Iris", "Jules", "Kira", "Leo", "Mira", "Nico", "Opal", "Pia",
+        "Quinn", "Rhea", "Silas", "Talia", "Uma", "Vera", "Wren", "Zara"
+    ];
 
     public string GenerateCode()
     {
@@ -22,18 +28,18 @@ public class RoomManager
         return code;
     }
 
-    public GameRoom CreateRoom(string hostConnectionId, string hostName)
+    public GameRoom CreateRoom(string hostPlayerId, string hostConnectionId, string hostName)
     {
         var code = GenerateCode();
-        var room = new GameRoom(code, hostConnectionId);
-        var host = new Player(hostConnectionId, hostName);
+        var room = new GameRoom(code, hostPlayerId);
+        var host = new Player(hostPlayerId, hostName, connectionId: hostConnectionId);
         room.Players.Add(host);
         _rooms[code] = room;
         _playerRooms[hostConnectionId] = code;
         return room;
     }
 
-    public (GameRoom? room, string? error) JoinRoom(string code, string connectionId, string playerName)
+    public (GameRoom? room, string? error) JoinRoom(string code, string playerId, string connectionId, string playerName)
     {
         if (!_rooms.TryGetValue(code.ToUpper(), out var room))
             return (null, "Room not found.");
@@ -44,23 +50,73 @@ public class RoomManager
         if (room.Players.Any(p => p.Name == playerName))
             return (null, "Name already taken in this room.");
 
-        room.Players.Add(new Player(connectionId, playerName));
+        room.Players.Add(new Player(playerId, playerName, connectionId: connectionId));
         _playerRooms[connectionId] = code;
         return (room, null);
     }
 
-    public (GameRoom? room, string? error) AddAiPlayer(string code, string requesterId, string aiName = "AI")
+    public (GameRoom? room, Player? player, string? error) ReconnectPlayer(
+        string code,
+        string playerId,
+        string connectionId)
+    {
+        if (!_rooms.TryGetValue(code.ToUpper(), out var room))
+            return (null, null, "Room not found.");
+
+        var player = room.Players.FirstOrDefault(p => p.Id == playerId && !p.IsAi);
+        if (player == null)
+            return (null, null, "Seat not found.");
+
+        if (player.ConnectionId != null)
+            _playerRooms.TryRemove(player.ConnectionId, out _);
+
+        player.ConnectionId = connectionId;
+        _playerRooms[connectionId] = room.Code;
+        return (room, player, null);
+    }
+
+    public (GameRoom? room, string? error) AddAiPlayer(string code, string requesterId)
     {
         if (!_rooms.TryGetValue(code, out var room))
             return (null, "Room not found.");
         if (room.HostId != requesterId)
             return (null, "Only the host can add AI players.");
+        if (room.Phase != GamePhase.Lobby)
+            return (null, "AI players can only be added in the lobby.");
         if (room.Players.Count >= 6)
             return (null, "Room is full.");
 
-        var uniqueName = GetUniqueName(room, aiName);
-        var ai = new Player($"AI-{Guid.NewGuid():N}", uniqueName, isAi: true);
+        var aiName = GetRandomAvailableAiName(room);
+        var ai = new Player($"AI-{Guid.NewGuid():N}", aiName, isAi: true);
         room.Players.Add(ai);
+        return (room, null);
+    }
+
+    public (GameRoom? room, string? error) RenameAiPlayer(
+        string code,
+        string requesterId,
+        string aiPlayerId,
+        string name)
+    {
+        if (!_rooms.TryGetValue(code.ToUpper(), out var room))
+            return (null, "Room not found.");
+        if (room.HostId != requesterId)
+            return (null, "Only the host can rename AI players.");
+        if (room.Phase != GamePhase.Lobby)
+            return (null, "AI players can only be renamed in the lobby.");
+
+        var ai = room.Players.FirstOrDefault(p => p.Id == aiPlayerId && p.IsAi);
+        if (ai == null)
+            return (null, "AI player not found.");
+
+        var trimmed = name.Trim();
+        if (trimmed.Length is < 1 or > 24)
+            return (null, "Name must be 1-24 characters.");
+        if (room.Players.Any(p => p.Id != aiPlayerId &&
+                                  string.Equals(p.Name, trimmed, StringComparison.OrdinalIgnoreCase)))
+            return (null, "Name already taken in this room.");
+
+        ai.Name = trimmed;
         return (room, null);
     }
 
@@ -70,23 +126,55 @@ public class RoomManager
     public GameRoom? GetRoomByPlayer(string connectionId) =>
         _playerRooms.TryGetValue(connectionId, out var code) ? GetRoomByCode(code) : null;
 
-    public void RemovePlayer(string connectionId)
+    public Player? GetPlayerByConnection(string connectionId)
     {
-        if (!_playerRooms.TryRemove(connectionId, out var code)) return;
-        if (!_rooms.TryGetValue(code, out var room)) return;
-
-        room.Players.RemoveAll(p => p.Id == connectionId);
-        if (room.Players.Count == 0)
-            _rooms.TryRemove(code, out _);
-        else if (room.HostId == connectionId)
-            room.HostId = room.Players.First().Id; // Reassign host
+        var room = GetRoomByPlayer(connectionId);
+        return room?.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
     }
 
-    private static string GetUniqueName(GameRoom room, string baseName)
+    public GameRoom? DisconnectPlayer(string connectionId)
     {
-        if (room.Players.All(p => p.Name != baseName)) return baseName;
-        int i = 2;
-        while (room.Players.Any(p => p.Name == $"{baseName} {i}")) i++;
-        return $"{baseName} {i}";
+        if (!_playerRooms.TryRemove(connectionId, out var code)) return null;
+        if (!_rooms.TryGetValue(code, out var room)) return null;
+
+        var player = room.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
+        if (player != null)
+            player.ConnectionId = null;
+
+        return room;
+    }
+
+    public (GameRoom? room, Player? player) RemovePlayer(string connectionId)
+    {
+        if (!_playerRooms.TryRemove(connectionId, out var code)) return (null, null);
+        if (!_rooms.TryGetValue(code, out var room)) return (null, null);
+
+        var player = room.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
+        if (player == null) return (room, null);
+
+        room.Players.RemoveAll(p => p.Id == player.Id);
+        if (room.Players.Count == 0 || room.Players.All(p => p.IsAi))
+            _rooms.TryRemove(code, out _);
+        else if (room.HostId == player.Id)
+            room.HostId = room.Players.FirstOrDefault(p => !p.IsAi)?.Id
+                          ?? room.Players.First().Id; // Reassign host
+
+        return (room, player);
+    }
+
+    private static string GetRandomAvailableAiName(GameRoom room)
+    {
+        var taken = room.Players
+            .Select(p => p.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var available = AiNames
+            .Where(name => !taken.Contains(name))
+            .ToList();
+
+        if (available.Count > 0)
+            return available[Rng.Next(available.Count)];
+
+        return $"Guest {Rng.Next(100, 1000)}";
     }
 }

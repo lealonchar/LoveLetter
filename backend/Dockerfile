@@ -21,4 +21,4 @@ FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
 
-ENTRYPOINT ["dotnet", "LoveLetter.dll"]
+CMD ASPNETCORE_URLS=http://0.0.0.0:${PORT:-8080} dotnet LoveLetter.dll

@@ -1,6 +1,9 @@
 ﻿# .NET
 backend/bin/
+backend/bin-check/
 backend/obj/
+.build-check/
+.dotnet-appdata/
 
 # Node
 frontend/node_modules/

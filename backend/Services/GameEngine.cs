@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using LoveLetter.Domain.Enums;
 using LoveLetter.Domain.Models;
 
@@ -5,6 +6,8 @@ namespace LoveLetter.Services;
 
 public class GameEngine
 {
+    public const string ChancellorPendingAction = "Chancellor";
+
     // Round setup
     public void StartRound(GameRoom room)
     {
@@ -63,14 +66,29 @@ public class GameEngine
     public string PlayCard(GameRoom room, string playerId, CardType cardType,
         string? targetId, CardType? guessedCard)
     {
-        if (room.PendingAction == "Chancellor")
+        if (room.PendingAction == ChancellorPendingAction)
             throw new InvalidOperationException("Waiting for Chancellor resolution.");
 
         var player = room.Players.First(p => p.Id == playerId);
+        if (room.Phase != GamePhase.Playing)
+            throw new InvalidOperationException("The round is not currently active.");
+        if (room.CurrentPlayer?.Id != playerId)
+            throw new InvalidOperationException("It is not this player's turn.");
+        if (player.IsEliminated)
+            throw new InvalidOperationException("Eliminated players cannot play cards.");
+        if (player.Hand == null || room.DrawnCard == null)
+            throw new InvalidOperationException("The player does not have two cards to choose from.");
 
-        var hand = player.Hand!;
-        var drawn = room.DrawnCard!;
-        bool playingHand = cardType == hand.Type;
+        var hand = player.Hand;
+        var drawn = room.DrawnCard;
+        bool playingHand;
+        if (cardType == hand.Type)
+            playingHand = true;
+        else if (cardType == drawn.Type)
+            playingHand = false;
+        else
+            throw new InvalidOperationException("That card is not in your hand.");
+
         var toPlay = playingHand ? hand : drawn;
         var toKeep = playingHand ? drawn : hand;
 
@@ -96,9 +114,11 @@ public class GameEngine
         (a == CardType.Countess && (b == CardType.King || b == CardType.Prince)) ||
         (b == CardType.Countess && (a == CardType.King || a == CardType.Prince));
 
-    private void AdvanceTurn(GameRoom room)
+    public void AdvanceTurn(GameRoom room)
     {
         int count = room.Players.Count;
+        if (count == 0) return;
+
         int next = (room.CurrentPlayerIndex + 1) % count;
         int tries = 0;
         while (room.Players[next].IsEliminated && tries < count)
@@ -137,29 +157,31 @@ public class GameEngine
 
     private string EffectGuard(GameRoom room, Player actor, Player? target, CardType? guess)
     {
-        if (target == null || target.IsProtected)
+        if (!IsValidOpponentTarget(actor, target))
             return $"{actor.Name} played Guard but had no valid target.";
+        var validTarget = target!;
         if (guess == null || guess == CardType.Guard)
             return $"{actor.Name} played Guard but made an invalid guess.";
 
-        if (target.Hand!.Type == guess)
+        if (validTarget.Hand!.Type == guess)
         {
-            Eliminate(room, target);
-            return $"{actor.Name} correctly guessed {target.Name} holds {guess}! {target.Name} is eliminated.";
+            Eliminate(room, validTarget);
+            return $"{actor.Name} correctly guessed {validTarget.Name} holds {guess}! {validTarget.Name} is eliminated.";
         }
         return $"{actor.Name} guessed {target.Name} holds {guess} — wrong!";
     }
 
     private string EffectPriest(Player actor, Player? target)
     {
-        if (target == null || target.IsProtected)
+        if (!IsValidOpponentTarget(actor, target))
             return $"{actor.Name} played Priest but had no valid target.";
-        return $"{actor.Name} played Priest and looked at {target.Name}'s hand.";
+        var validTarget = target!;
+        return $"{actor.Name} played Priest and looked at {validTarget.Name}'s hand.";
     }
 
     private string EffectBaron(GameRoom room, Player actor, Player? target)
     {
-        if (target == null || target.IsProtected)
+        if (!IsValidOpponentTarget(actor, target))
             return $"{actor.Name} played Baron but had no valid target.";
 
         int av = actor.Hand!.Value, tv = target.Hand!.Value;
@@ -177,10 +199,14 @@ public class GameEngine
     private string EffectPrince(GameRoom room, Player actor, Player? target)
     {
         var victim = target ?? actor;
+        if (victim.IsEliminated)
+            return $"{actor.Name} played Prince but had no valid target.";
         if (victim.IsProtected && victim != actor)
             return $"{actor.Name} played Prince but target is protected.";
+        if (victim.Hand == null)
+            return $"{actor.Name} played Prince but had no valid target.";
 
-        var discarded = victim.Hand!;
+        var discarded = victim.Hand;
         victim.Discards.Add(discarded);
 
         if (discarded.Type == CardType.Princess)
@@ -206,14 +232,14 @@ public class GameEngine
 
         room.ChancellorOptions = options;
         room.ChancellorPlayerId = actor.Id;
-        room.PendingAction = "Chancellor";
+        room.PendingAction = ChancellorPendingAction;
 
         return $"{actor.Name} played Chancellor and must choose a card to keep.";
     }
 
     private string EffectKing(Player actor, Player? target)
     {
-        if (target == null || target.IsProtected)
+        if (!IsValidOpponentTarget(actor, target))
             return $"{actor.Name} played King but had no valid target.";
         (actor.Hand, target.Hand) = (target.Hand, actor.Hand);
         return $"{actor.Name} played King and traded hands with {target.Name}.";
@@ -234,6 +260,13 @@ public class GameEngine
             player.Hand = null;
         }
     }
+
+    private static bool IsValidOpponentTarget(Player actor, [NotNullWhen(true)] Player? target) =>
+        target != null &&
+        target.Id != actor.Id &&
+        !target.IsEliminated &&
+        !target.IsProtected &&
+        target.Hand != null;
 
     // Round / game end
 

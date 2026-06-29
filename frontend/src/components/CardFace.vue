@@ -10,11 +10,11 @@
     <!-- Center art area -->
     <div class="card-art">
       <img
-        v-if="imageSrc"
-        :src="imageSrc"
-        :alt="card.name"
-        class="card-img"
-        @error="imgError = true"
+          v-if="imageSrc"
+          :src="imageSrc"
+          :alt="card.name"
+          class="card-img"
+          @error="imgError = true"
       />
       <div v-else class="card-art-placeholder">
         <span class="card-art-icon">{{ icon }}</span>
@@ -87,9 +87,9 @@ const imageSrc = computed(() => {
 }
 
 /* Sizes */
-.card-face--sm  { width: 48px;  height: 68px; }
-.card-face--md  { width: 72px;  height: 100px; }
-.card-face--lg  { width: 110px; height: 160px; }
+.card-face--sm  { width: 64px;  height: 90px; }
+.card-face--md  { width: 96px;  height: 134px; }
+.card-face--lg  { width: 150px; height: 210px; }
 
 /* Colored top stripe per card */
 .card-face::before {
@@ -121,30 +121,29 @@ const imageSrc = computed(() => {
   gap: 1px;
 }
 
-.card-corner--tl { top: 8px; left: 7px; }
+.card-corner--tl { top: 10px; left: 9px; }
 .card-corner--br {
-  bottom: 8px; right: 7px;
+  bottom: 10px; right: 9px;
   transform: rotate(180deg);
 }
 
 .card-value {
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 800;
   color: #1c0a00;
 }
 
-.card-face--sm .card-value { font-size: 9px; }
-.card-face--lg .card-value { font-size: 15px; }
+.card-face--sm .card-value { font-size: 13px; }
+.card-face--lg .card-value { font-size: 20px; }
 
 .card-abbr {
-  font-size: 7px;
+  font-size: 9px;
   font-weight: 600;
   color: #78350f;
   letter-spacing: 0.05em;
 }
 
-.card-face--sm .card-corner--br,
-.card-face--sm .card-corner--tl { display: none; }
+.card-face--sm .card-abbr { font-size: 8px; }
 
 /* Art */
 .card-art {
@@ -174,18 +173,17 @@ const imageSrc = computed(() => {
 }
 
 .card-art-icon {
-  font-size: 22px;
+  font-size: 28px;
   filter: drop-shadow(0 1px 2px rgba(0,0,0,0.2));
 }
 
-.card-face--sm .card-art-icon  { font-size: 14px; }
-.card-face--lg .card-art-icon  { font-size: 32px; }
+.card-face--sm .card-art-icon  { font-size: 22px; }
+.card-face--lg .card-art-icon  { font-size: 48px; }
 
 /* Name */
 .card-name {
-  font-size: 8px;
+  font-size: 9px;
   font-weight: 700;
-  text-align: center;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: #44180a;
@@ -195,16 +193,16 @@ const imageSrc = computed(() => {
   flex-shrink: 0;
 }
 
-.card-face--sm .card-name { display: none; }
-.card-face--lg .card-name { font-size: 10px; padding: 3px 6px; }
+.card-face--sm .card-name { font-size: 8px; padding: 2px 3px 3px; }
+.card-face--lg .card-name { font-size: 12px; padding: 4px 8px; }
 
 /* Description */
 .card-desc {
-  font-size: 7.5px;
+  font-size: 9px;
   line-height: 1.4;
   color: #78350f;
   text-align: center;
-  padding: 0 6px 6px;
+  padding: 0 8px 8px;
   flex-shrink: 0;
 }
 </style>

@@ -2,7 +2,8 @@ namespace LoveLetter.Domain.Models;
 
 public class Player
 {
-    public string Id { get; init; } // SignalR connection ID (or "AI-{name}")
+    public string Id { get; init; }
+    public string? ConnectionId { get; set; }
     public string Name { get; set; }
     public bool IsAi { get; init; }
     public Card? Hand { get; set; } // Current card in hand
@@ -11,11 +12,12 @@ public class Player
     public List<Card> Discards { get; set; } = [];
     public int Tokens { get; set; } // Win/favor tokens
 
-    public Player(string id, string name, bool isAi = false)
+    public Player(string id, string name, bool isAi = false, string? connectionId = null)
     {
         Id = id;
         Name = name;
         IsAi = isAi;
+        ConnectionId = connectionId;
     }
 }
 

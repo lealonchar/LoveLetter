@@ -139,7 +139,7 @@ public class AiPlayer
         var fullCounts = new Dictionary<CardType, int>
         {
             [CardType.Spy]        = 2,
-            [CardType.Guard]      = 5,
+            [CardType.Guard]      = 6,
             [CardType.Priest]     = 2,
             [CardType.Baron]      = 2,
             [CardType.Handmaid]   = 2,
