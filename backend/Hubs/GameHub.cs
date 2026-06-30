@@ -79,11 +79,30 @@ public class GameHub : Hub
         }
 
         var roomCode = room.Code;
+
+        if (room.Phase == GamePhase.Playing)
+        {
+            var (replacementRoom, replacement) = _rooms.ReplacePlayerWithAi(Context.ConnectionId);
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, roomCode);
+            await Clients.Caller.SendAsync("LeftRoom");
+
+            if (replacementRoom == null ||
+                replacement == null ||
+                replacementRoom.Players.Count == 0 ||
+                replacementRoom.Players.All(p => p.IsAi))
+                return;
+
+            EnsureAiLogic(replacementRoom, replacement);
+            replacementRoom.Log.Add($"{replacement.Name} left the game and was replaced by a bot.");
+            await BroadcastState(replacementRoom);
+            await Clients.Group(roomCode).SendAsync("PlayerLeft", replacement.Id);
+            await RunAiTurn(replacementRoom);
+            return;
+        }
+
         var removedIndex = room.Players.FindIndex(p => p.Id == player.Id);
         var currentIndex = room.CurrentPlayerIndex;
         var wasCurrentPlayer = room.CurrentPlayer?.Id == player.Id;
-        var wasPendingChancellor = room.ChancellorPlayerId == player.Id;
-
         var (updatedRoom, removedPlayer) = _rooms.RemovePlayer(Context.ConnectionId);
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, roomCode);
         await Clients.Caller.SendAsync("LeftRoom");
@@ -94,30 +113,7 @@ public class GameHub : Hub
             updatedRoom.Players.All(p => p.IsAi))
             return;
 
-        if (updatedRoom.Phase == GamePhase.Playing)
-        {
-            RepositionCurrentPlayer(updatedRoom, removedIndex, currentIndex, wasCurrentPlayer);
-
-            if (wasPendingChancellor)
-            {
-                foreach (var card in updatedRoom.ChancellorOptions)
-                    updatedRoom.DrawPile.Add(card);
-                ClearPendingChancellor(updatedRoom);
-            }
-
-            if (wasCurrentPlayer)
-            {
-                updatedRoom.DrawnCard = null;
-                _engine.CheckRoundEnd(updatedRoom);
-                if (updatedRoom.Phase == GamePhase.Playing)
-                    _engine.BeginTurn(updatedRoom);
-            }
-            else
-            {
-                _engine.CheckRoundEnd(updatedRoom);
-            }
-        }
-
+        RepositionCurrentPlayer(updatedRoom, removedIndex, currentIndex, wasCurrentPlayer);
         updatedRoom.Log.Add($"{removedPlayer.Name} left the game.");
         await BroadcastState(updatedRoom);
         await Clients.Group(roomCode).SendAsync("PlayerLeft", removedPlayer.Id);
@@ -133,10 +129,7 @@ public class GameHub : Hub
         if (error != null) { await Clients.Caller.SendAsync("Error", error); return; }
 
         var aiPlayer = room!.Players.Last(p => p.IsAi);
-        if (!AiPlayers.ContainsKey(roomCode))
-            AiPlayers[roomCode] = new Dictionary<string, AiPlayer>();
-
-        AiPlayers[roomCode][aiPlayer.Id] = new AiPlayer();
+        EnsureAiLogic(room, aiPlayer);
         await BroadcastState(room);
     }
 
@@ -227,6 +220,15 @@ public class GameHub : Hub
 
         // Reset every AI player's knowledge for the new round
         foreach (var aiPlayer in room.Players.Where(p => p.IsAi))
+            EnsureAiLogic(room, aiPlayer);
+    }
+
+    private static void EnsureAiLogic(GameRoom room, Player aiPlayer)
+    {
+        if (!AiPlayers.ContainsKey(room.Code))
+            AiPlayers[room.Code] = new Dictionary<string, AiPlayer>();
+
+        if (!AiPlayers[room.Code].ContainsKey(aiPlayer.Id))
             AiPlayers[room.Code][aiPlayer.Id] = new AiPlayer();
     }
 
@@ -263,6 +265,26 @@ public class GameHub : Hub
             var ai = room.CurrentPlayer;
             if (ai == null || ai.IsEliminated)
                 break;
+
+            if (room.PendingAction == GameEngine.ChancellorPendingAction)
+            {
+                if (room.ChancellorPlayerId != ai.Id)
+                    break;
+
+                if (!ResolveAiChancellor(room, ai))
+                {
+                    _engine.AdvanceTurn(room);
+                    _engine.BeginTurn(room);
+                    await BroadcastState(room);
+                    continue;
+                }
+
+                if (room.Phase is GamePhase.RoundOver or GamePhase.GameOver) break;
+                _engine.AdvanceTurn(room);
+                _engine.BeginTurn(room);
+                await BroadcastState(room);
+                continue;
+            }
 
             if (room.DrawnCard == null)
             {
@@ -307,8 +329,13 @@ public class GameHub : Hub
             // AI resolves Chancellor automatically
             if (room.PendingAction == GameEngine.ChancellorPendingAction)
             {
-                var best = room.ChancellorOptions.OrderByDescending(c => c.Value).First();
-                ResolveChancellorChoice(room, ai, best);
+                if (!ResolveAiChancellor(room, ai))
+                {
+                    _engine.AdvanceTurn(room);
+                    _engine.BeginTurn(room);
+                    await BroadcastState(room);
+                    continue;
+                }
 
                 if (room.Phase is GamePhase.RoundOver or GamePhase.GameOver) break;
                 _engine.AdvanceTurn(room);
@@ -322,6 +349,20 @@ public class GameHub : Hub
         }
 
         await BroadcastState(room);
+    }
+
+    private static bool ResolveAiChancellor(GameRoom room, Player ai)
+    {
+        var best = room.ChancellorOptions.OrderByDescending(c => c.Value).FirstOrDefault();
+        if (best == null)
+        {
+            ClearPendingChancellor(room);
+            room.Log.Add($"{ai.Name} could not resolve Chancellor because no cards were available.");
+            return false;
+        }
+
+        ResolveChancellorChoice(room, ai, best);
+        return true;
     }
 
 

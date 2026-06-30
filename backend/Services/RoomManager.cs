@@ -162,6 +162,29 @@ public class RoomManager
         return (room, player);
     }
 
+    public (GameRoom? room, Player? player) ReplacePlayerWithAi(string connectionId)
+    {
+        if (!_playerRooms.TryRemove(connectionId, out var code)) return (null, null);
+        if (!_rooms.TryGetValue(code, out var room)) return (null, null);
+
+        var player = room.Players.FirstOrDefault(p => p.ConnectionId == connectionId);
+        if (player == null) return (room, null);
+
+        player.ConnectionId = null;
+        player.IsAi = true;
+
+        if (room.Players.All(p => p.IsAi))
+        {
+            _rooms.TryRemove(code, out _);
+        }
+        else if (room.HostId == player.Id)
+        {
+            room.HostId = room.Players.First(p => !p.IsAi).Id;
+        }
+
+        return (room, player);
+    }
+
     private static string GetRandomAvailableAiName(GameRoom room)
     {
         var taken = room.Players

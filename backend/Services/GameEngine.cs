@@ -53,12 +53,25 @@ public class GameEngine
     
     public void BeginTurn(GameRoom room)
     {
+        if (room.Phase != GamePhase.Playing || room.Players.Count == 0)
+            return;
+
+        if (room.CurrentPlayer == null || room.CurrentPlayer.IsEliminated)
+            AdvanceTurn(room);
+
         if (room.DrawPile.Count == 0)
         {
             CheckRoundEnd(room);
             return;
         }
-        var player = room.CurrentPlayer!;
+
+        var player = room.CurrentPlayer;
+        if (player == null || player.IsEliminated)
+        {
+            CheckRoundEnd(room);
+            return;
+        }
+
         player.IsProtected = false;
         room.DrawnCard = DrawCard(room);
     }
@@ -103,8 +116,11 @@ public class GameEngine
         string log = ApplyCardEffect(room, player, toPlay, targetId, guessedCard);
         room.Log.Add(log);
 
+        if (room.PendingAction == ChancellorPendingAction)
+            return log;
+
         CheckRoundEnd(room);
-        if (room.Phase == GamePhase.Playing && room.PendingAction == null)
+        if (room.Phase == GamePhase.Playing)
             AdvanceTurn(room);
 
         return log;
@@ -126,6 +142,9 @@ public class GameEngine
             next = (next + 1) % count;
             tries++;
         }
+        if (tries >= count && room.Players[next].IsEliminated)
+            return;
+
         room.CurrentPlayerIndex = next;
     }
     
@@ -272,16 +291,24 @@ public class GameEngine
 
     public void CheckRoundEnd(GameRoom room)
     {
+        if (room.PendingAction == ChancellorPendingAction)
+            return;
+
         var alive = room.Players.Where(p => !p.IsEliminated).ToList();
 
         bool deckEmpty = room.DrawPile.Count == 0;
-        bool oneLeft   = alive.Count == 1;
+        bool oneLeft   = alive.Count <= 1;
 
         if (!oneLeft && !deckEmpty) return;
 
         room.Phase = GamePhase.RoundOver;
 
         Player roundWinner;
+        if (alive.Count == 0)
+        {
+            room.Log.Add("The round ended with no players still standing.");
+            return;
+        }
         if (oneLeft)
         {
             roundWinner = alive[0];
@@ -289,7 +316,14 @@ public class GameEngine
         }
         else
         {
-            roundWinner = alive
+            var contenders = alive.Where(p => p.Hand != null).ToList();
+            if (contenders.Count == 0)
+            {
+                room.Log.Add("The deck was exhausted, but no player had a card to compare.");
+                return;
+            }
+
+            roundWinner = contenders
                 .OrderByDescending(p => p.Hand!.Value)
                 .ThenByDescending(p => p.Discards.Sum(c => c.Value))
                 .First();

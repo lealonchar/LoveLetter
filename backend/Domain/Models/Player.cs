@@ -5,7 +5,7 @@ public class Player
     public string Id { get; init; }
     public string? ConnectionId { get; set; }
     public string Name { get; set; }
-    public bool IsAi { get; init; }
+    public bool IsAi { get; set; }
     public Card? Hand { get; set; } // Current card in hand
     public bool IsEliminated { get; set; }
     public bool IsProtected { get; set; } // Handmaid protection
