@@ -302,6 +302,7 @@ public class GameHub : Hub
             try
             {
                 _engine.PlayCard(room, ai.Id, card, target, guess);
+                UpdateAiKnowledgeAfterPlay(room, aiLogic, card, target);
             }
             catch
             {
@@ -310,7 +311,9 @@ public class GameHub : Hub
 
                 try
                 {
-                    _engine.PlayCard(room, ai.Id, room.DrawnCard.Type, null, null);
+                    var fallbackCard = room.DrawnCard.Type;
+                    _engine.PlayCard(room, ai.Id, fallbackCard, null, null);
+                    UpdateAiKnowledgeAfterPlay(room, aiLogic, fallbackCard, null);
                 }
                 catch
                 {
@@ -349,6 +352,31 @@ public class GameHub : Hub
         }
 
         await BroadcastState(room);
+    }
+
+    private static void UpdateAiKnowledgeAfterPlay(
+        GameRoom room,
+        AiPlayer aiLogic,
+        CardType playedCard,
+        string? targetId)
+    {
+        aiLogic.CardSeen(playedCard);
+
+        if (targetId == null)
+            return;
+
+        var target = room.Players.FirstOrDefault(p => p.Id == targetId);
+        if (target == null)
+            return;
+
+        if (playedCard == CardType.Priest && target.Hand != null && !target.IsEliminated)
+        {
+            aiLogic.UpdateKnowledge(target.Id, target.Hand.Type);
+            return;
+        }
+
+        if (playedCard is CardType.Prince or CardType.King or CardType.Baron or CardType.Guard)
+            aiLogic.UpdateKnowledge(target.Id, null);
     }
 
     private static bool ResolveAiChancellor(GameRoom room, Player ai)
