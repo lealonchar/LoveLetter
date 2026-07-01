@@ -63,6 +63,26 @@
       </div>
     </aside>
 
+    <aside :class="['reference-panel', cardReferenceOpen ? 'reference-panel--open' : '']" aria-label="Card reference">
+      <button type="button" class="reference-toggle" @click="cardReferenceOpen = !cardReferenceOpen">
+        <span>{{ cardReferenceOpen ? 'Close cards' : 'Cards' }}</span>
+        <span class="reference-count">{{ totalCardCount }}</span>
+      </button>
+      <div v-if="cardReferenceOpen" class="reference-entries">
+        <div
+            v-for="card in cardReference"
+            :key="card.type"
+            class="reference-card">
+          <div class="reference-card-head">
+            <span class="reference-value">{{ card.value }}</span>
+            <span class="reference-name">{{ card.name }}</span>
+            <span class="reference-copy">x{{ card.count }}</span>
+          </div>
+          <p class="reference-description">{{ card.description }}</p>
+        </div>
+      </div>
+    </aside>
+
     <section :class="['my-area', selectedCard && isMyTurn ? 'my-area--acting' : '']">
       <div class="my-info-bar">
         <div class="my-tokens">
@@ -203,6 +223,7 @@ import { ref, computed } from 'vue'
 import { useGameStore } from '../stores/gameStore'
 import CardFace from './CardFace.vue'
 import OpponentSeat from './OpponentSeat.vue'
+import { cardReference, totalCardCount } from '../data/cardReference'
 
 const { state, myPlayer, isMyTurn, playCard, resolveChancellor, leaveGame } = useGameStore()
 
@@ -211,6 +232,7 @@ const selectedTarget = ref(null)
 const selectedGuess = ref(null)
 const selectedChancellorCard = ref(null)
 const logOpen = ref(false)
+const cardReferenceOpen = ref(false)
 const leaveConfirmOpen = ref(false)
 
 const guardGuesses = ['Priest', 'Baron', 'Handmaid', 'Prince', 'Chancellor', 'King', 'Countess', 'Princess']
@@ -334,6 +356,7 @@ async function confirmLeave() {
 .table-center,
 .my-area,
 .log-panel,
+.reference-panel,
 .leave-game-btn {
   position: relative;
   z-index: 1;
@@ -784,6 +807,112 @@ async function confirmLeave() {
   font-style: italic;
 }
 
+.reference-panel {
+  position: absolute;
+  bottom: 14px;
+  left: 14px;
+  z-index: 20;
+  width: 132px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(0,0,0,0.28);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.28);
+  transition: width 0.2s ease, background 0.2s ease;
+}
+
+.reference-panel--open {
+  width: min(430px, calc(100% - 28px));
+  background: rgba(10, 2, 2, 0.95);
+}
+
+.reference-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: rgba(255,255,255,0.06);
+  border: 0;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  color: #fecdd3;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 10px 12px;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+}
+
+.reference-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 20px;
+  border-radius: 8px;
+  background: rgba(251, 113, 133, 0.18);
+  color: #ffe4e6;
+  font-size: 11px;
+}
+
+.reference-entries {
+  max-height: min(440px, calc(100dvh - 150px));
+  overflow-y: auto;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.reference-card {
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.035);
+  border-radius: 8px;
+  padding: 9px 10px;
+}
+
+.reference-card-head {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.reference-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: rgba(251, 113, 133, 0.16);
+  color: #ffe4e6;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.reference-name {
+  min-width: 0;
+  color: #ffe4e6;
+  font-size: 13px;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reference-copy {
+  color: #fda4af;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.reference-description {
+  margin: 6px 0 0;
+  color: #fecdd3;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .chancellor-overlay {
   position: fixed;
   inset: 0;
@@ -1076,6 +1205,11 @@ async function confirmLeave() {
     left: 10px;
   }
 
+  .reference-panel {
+    bottom: 10px;
+    left: 10px;
+  }
+
   .leave-game-btn {
     top: 10px;
     right: 10px;
@@ -1085,7 +1219,12 @@ async function confirmLeave() {
     width: min(320px, calc(100% - 20px));
   }
 
-  .log-entries {
+  .reference-panel--open {
+    width: min(360px, calc(100% - 20px));
+  }
+
+  .log-entries,
+  .reference-entries {
     max-height: 220px;
   }
 }
