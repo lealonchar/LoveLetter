@@ -34,6 +34,15 @@ jobs:
       - name: Publish backend
         run: dotnet publish backend/LoveLetter.csproj --configuration Release --no-restore --output "${{ env.PUBLISH_DIR }}"
 
+      - name: Check Azure publish profile secret
+        shell: pwsh
+        env:
+          AZURE_WEBAPP_PUBLISH_PROFILE: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:AZURE_WEBAPP_PUBLISH_PROFILE)) {
+            Write-Error "Missing GitHub repository secret: AZURE_WEBAPP_PUBLISH_PROFILE"
+          }
+
       - name: Deploy backend
         uses: azure/webapps-deploy@v3
         with:
