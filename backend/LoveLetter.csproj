@@ -5,11 +5,5 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>LoveLetter</RootNamespace>
     <AssemblyName>LoveLetter</AssemblyName>
-    <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
   </PropertyGroup>
-  <ItemGroup>
-    <Content Include="..\.dockerignore">
-      <Link>.dockerignore</Link>
-    </Content>
-  </ItemGroup>
 </Project>

@@ -5,6 +5,7 @@ backend/obj/
 .build-check/
 .dotnet-appdata/
 .docker-check/
+backend/.azure/
 
 # Node
 frontend/node_modules/
