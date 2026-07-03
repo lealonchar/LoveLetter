@@ -4,6 +4,7 @@ backend/bin-check/
 backend/obj/
 .build-check/
 .dotnet-appdata/
+.docker-check/
 
 # Node
 frontend/node_modules/

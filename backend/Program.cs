@@ -35,7 +35,7 @@ var app = builder.Build();
 app.UseCors();
 app.MapHub<GameHub>("/gamehub");
 
-// Health check for Railway
+// Health check for container hosting
 app.MapGet("/", () => "Love Letter server running.");
 
 app.Run();
