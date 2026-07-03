@@ -1,0 +1,42 @@
+name: Deploy backend to Azure App Service
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - backend/**
+      - .github/workflows/backend-azure-app-service.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AZURE_WEBAPP_NAME: loveletter-backend-lealonchar
+  DOTNET_VERSION: 10.0.x
+  PUBLISH_DIR: backend/publish
+
+jobs:
+  deploy:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore backend
+        run: dotnet restore backend/LoveLetter.csproj
+
+      - name: Publish backend
+        run: dotnet publish backend/LoveLetter.csproj --configuration Release --no-restore --output "${{ env.PUBLISH_DIR }}"
+
+      - name: Deploy backend
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: ${{ env.PUBLISH_DIR }}
