@@ -37,6 +37,12 @@
 
       <div class="tokens-info">{{ state.gameState.roundsToWin }} tokens to win</div>
 
+      <Transition name="table-event" mode="out-in">
+        <div v-if="tableEvent" :key="tableEventKey" class="table-event-toast">
+          {{ tableEvent }}
+        </div>
+      </Transition>
+
       <Transition name="pop">
         <div v-if="state.priestReveal" class="priest-bubble">
           <span>{{ getPlayerName(state.priestReveal.targetId) }} holds</span>
@@ -219,7 +225,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useGameStore } from '../stores/gameStore'
 import CardFace from './CardFace.vue'
 import OpponentSeat from './OpponentSeat.vue'
@@ -234,6 +240,10 @@ const selectedChancellorCard = ref(null)
 const logOpen = ref(false)
 const cardReferenceOpen = ref(false)
 const leaveConfirmOpen = ref(false)
+const tableEvent = ref(null)
+const tableEventKey = ref(0)
+let tableEventTimer = null
+let lastSeenLogEntry = null
 
 const guardGuesses = ['Priest', 'Baron', 'Handmaid', 'Prince', 'Chancellor', 'King', 'Countess', 'Princess']
 const targetedCards = ['Guard', 'Priest', 'Baron', 'King']
@@ -254,6 +264,27 @@ const opponents = computed(() =>
 
 const gameLog = computed(() =>
     state.gameState?.log ?? state.gameState?.Log ?? []
+)
+
+watch(
+    () => {
+      const entries = gameLog.value
+      const latest = entries[entries.length - 1]
+      return latest ? `${entries.length}:${latest}` : null
+    },
+    (entryKey) => {
+      if (!entryKey || entryKey === lastSeenLogEntry) return
+      lastSeenLogEntry = entryKey
+
+      const latest = gameLog.value[gameLog.value.length - 1]
+      tableEvent.value = latest
+      tableEventKey.value += 1
+
+      if (tableEventTimer) clearTimeout(tableEventTimer)
+      tableEventTimer = setTimeout(() => {
+        tableEvent.value = null
+      }, 7000)
+    }
 )
 
 const validTargets = computed(() => {
@@ -447,6 +478,20 @@ async function confirmLeave() {
 .eliminated-msg {
   font-size: 13px;
   color: #fda4af;
+}
+
+.table-event-toast {
+  max-width: min(100%, 540px);
+  border: 1px solid rgba(251, 113, 133, 0.26);
+  background: rgba(20, 5, 8, 0.88);
+  color: #ffe4e6;
+  border-radius: 8px;
+  box-shadow: 0 12px 34px rgba(0,0,0,0.36);
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.35;
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 
 .priest-bubble {
@@ -1024,14 +1069,18 @@ async function confirmLeave() {
 .fade-enter-active,
 .fade-leave-active,
 .slide-up-enter-active,
-.slide-up-leave-active {
+.slide-up-leave-active,
+.table-event-enter-active,
+.table-event-leave-active {
   transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
 .fade-enter-from,
 .fade-leave-to,
 .slide-up-enter-from,
-.slide-up-leave-to {
+.slide-up-leave-to,
+.table-event-enter-from,
+.table-event-leave-to {
   opacity: 0;
   transform: translateY(10px);
 }

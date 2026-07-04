@@ -1,5 +1,7 @@
 ﻿using LoveLetter.Domain.Enums;
 
+using System.Threading;
+
 namespace LoveLetter.Domain.Models;
 
 public class GameRoom
@@ -19,6 +21,7 @@ public class GameRoom
     public List<string> Log { get; set; } = [];
     public List<Card> ChancellorOptions { get; set; } = [];
     public string? ChancellorPlayerId { get; set; }
+    public SemaphoreSlim StateLock { get; } = new(1, 1);
 
     public Player? CurrentPlayer =>
         Players.Count > 0 ? Players[CurrentPlayerIndex] : null;

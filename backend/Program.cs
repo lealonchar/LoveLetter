@@ -9,7 +9,8 @@ builder.Services.AddSingleton<RoomManager>();
 builder.Services.AddSingleton<GameEngine>();
 
 builder.Services.AddSignalR()
-    .AddJsonProtocol(options => {
+    .AddJsonProtocol(options =>
+    {
         options.PayloadSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
         options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter());
     });

@@ -2,6 +2,7 @@ import { reactive, computed } from 'vue'
 import { useSignalR } from '../composables/useSignalR'
 
 const { connect, on, invoke, isConnected } = useSignalR()
+let listenersRegistered = false
 
 const STORAGE_KEYS = {
   playerId: 'loveletter.playerId',
@@ -55,9 +56,16 @@ const opponents = computed(() =>
 
 // SignalR listeners
 function setupListeners() {
+  if (listenersRegistered) return
+  listenersRegistered = true
+
   on('GameStateUpdated', (dto) => {
     dto.log = dto.log ?? dto.Log ?? []
     state.gameState = dto
+    if (dto.roomCode) {
+      state.roomCode = dto.roomCode
+      localStorage.setItem(STORAGE_KEYS.roomCode, dto.roomCode)
+    }
     if (dto.yourState)
       state.myId = dto.yourState.id
     state.pendingError = null
@@ -69,9 +77,8 @@ function setupListeners() {
   })
 
   on('ReconnectFailed', (_msg) => {
-    state.roomCode = null
-    state.gameState = null
-    localStorage.removeItem(STORAGE_KEYS.roomCode)
+    clearRoomState()
+    state.pendingError = _msg
   })
 
   on('PriestReveal', (targetId, card) => {
@@ -121,11 +128,15 @@ async function createRoom(name) {
 }
 
 async function joinRoom(code, name) {
+  const roomCode = code.toUpperCase()
   state.myName = name
-  state.roomCode = code.toUpperCase()
+  state.pendingError = null
   localStorage.setItem(STORAGE_KEYS.playerName, name)
-  localStorage.setItem(STORAGE_KEYS.roomCode, state.roomCode)
-  await invoke('JoinRoom', code.toUpperCase(), name, state.myId)
+  const joined = await invoke('JoinRoom', roomCode, name, state.myId)
+  if (joined) {
+    state.roomCode = roomCode
+    localStorage.setItem(STORAGE_KEYS.roomCode, roomCode)
+  }
 }
 
 async function addAiPlayer() {

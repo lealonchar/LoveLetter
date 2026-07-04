@@ -3,8 +3,6 @@ using LoveLetter.Domain.Models;
 
 namespace LoveLetter.Services;
 
-// Rule-based AI for Love Letter. It uses a small decision tree with card odds,
-// known hands, and player threat to avoid obviously bad plays.
 public class AiPlayer
 {
     private static readonly Dictionary<CardType, int> FullCounts = new()

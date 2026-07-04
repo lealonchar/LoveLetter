@@ -50,7 +50,7 @@ public class GameEngine
         room.DrawPile.RemoveAt(0);
         return card;
     }
-    
+
     public void BeginTurn(GameRoom room)
     {
         if (room.Phase != GamePhase.Playing || room.Players.Count == 0)
@@ -147,7 +147,7 @@ public class GameEngine
 
         room.CurrentPlayerIndex = next;
     }
-    
+
     private string ApplyCardEffect(GameRoom room, Player actor, Card card,
         string? targetId, CardType? guessedCard)
     {
@@ -155,17 +155,17 @@ public class GameEngine
 
         return card.Type switch
         {
-            CardType.Spy        => EffectSpy(actor),
-            CardType.Guard      => EffectGuard(room, actor, target, guessedCard),
-            CardType.Priest     => EffectPriest(actor, target),
-            CardType.Baron      => EffectBaron(room, actor, target),
-            CardType.Handmaid   => EffectHandmaid(actor),
-            CardType.Prince     => EffectPrince(room, actor, target),
+            CardType.Spy => EffectSpy(actor),
+            CardType.Guard => EffectGuard(room, actor, target, guessedCard),
+            CardType.Priest => EffectPriest(actor, target),
+            CardType.Baron => EffectBaron(room, actor, target),
+            CardType.Handmaid => EffectHandmaid(actor),
+            CardType.Prince => EffectPrince(room, actor, target),
             CardType.Chancellor => EffectChancellor(room, actor),
-            CardType.King       => EffectKing(actor, target),
-            CardType.Countess   => $"{actor.Name} played the Countess.",
-            CardType.Princess   => EffectPrincess(room, actor),
-            _                   => "Unknown card played."
+            CardType.King => EffectKing(actor, target),
+            CardType.Countess => $"{actor.Name} played the Countess.",
+            CardType.Princess => EffectPrincess(room, actor),
+            _ => "Unknown card played."
         };
     }
 
@@ -205,7 +205,7 @@ public class GameEngine
 
         int av = actor.Hand!.Value, tv = target.Hand!.Value;
         if (av > tv) { Eliminate(room, target); return $"{actor.Name} won the Baron comparison. {target.Name} is eliminated."; }
-        if (tv > av) { Eliminate(room, actor);  return $"{target.Name} won the Baron comparison. {actor.Name} is eliminated."; }
+        if (tv > av) { Eliminate(room, actor); return $"{target.Name} won the Baron comparison. {actor.Name} is eliminated."; }
         return $"{actor.Name} and {target.Name} tied in Baron comparison — nobody eliminated.";
     }
 
@@ -297,7 +297,7 @@ public class GameEngine
         var alive = room.Players.Where(p => !p.IsEliminated).ToList();
 
         bool deckEmpty = room.DrawPile.Count == 0;
-        bool oneLeft   = alive.Count <= 1;
+        bool oneLeft = alive.Count <= 1;
 
         if (!oneLeft && !deckEmpty) return;
 

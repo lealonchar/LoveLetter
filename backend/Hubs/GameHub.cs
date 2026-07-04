@@ -1,6 +1,7 @@
 using LoveLetter.Domain.Dto;
 using LoveLetter.Domain.Enums;
 using LoveLetter.Domain.Models;
+using System.Collections.Concurrent;
 
 namespace LoveLetter.Hubs;
 
@@ -11,33 +12,103 @@ public class GameHub : Hub
 {
     private readonly RoomManager _rooms;
     private readonly GameEngine _engine;
+    private readonly IHubContext<GameHub> _hubContext;
     private const int MaxAiTurnsPerRun = 100;
-    private static readonly Dictionary<string, Dictionary<string, AiPlayer>> AiPlayers = new();
+    private const int TurnReadPauseMs = 1800;
+    private const int DisconnectReplacementGraceMs = 12000;
+    private static readonly ConcurrentDictionary<string, ConcurrentDictionary<string, AiPlayer>> AiPlayers = new();
 
-    public GameHub(RoomManager rooms, GameEngine engine)
+    public GameHub(RoomManager rooms, GameEngine engine, IHubContext<GameHub> hubContext)
     {
         _rooms = rooms;
         _engine = engine;
+        _hubContext = hubContext;
+    }
+
+    private static async Task<IDisposable> LockRoom(GameRoom room)
+    {
+        await room.StateLock.WaitAsync();
+        return new RoomLock(room);
+    }
+
+    private sealed class RoomLock(GameRoom room) : IDisposable
+    {
+        public void Dispose() => room.StateLock.Release();
     }
 
     // Connection lifecycle
 
     public override async Task OnDisconnectedAsync(Exception? ex)
     {
-        var room = _rooms.DisconnectPlayer(Context.ConnectionId);
+        var room = _rooms.GetRoomByPlayer(Context.ConnectionId);
         if (room != null)
         {
-            await Groups.RemoveFromGroupAsync(Context.ConnectionId, room.Code);
-
-            if (room.Players.Count > 0)
+            var roomCode = room.Code;
+            Player? disconnectedPlayer;
+            var shouldReplaceWithBot = false;
+            using (await LockRoom(room))
             {
-                await BroadcastState(room);
+                var result = _rooms.DisconnectPlayer(Context.ConnectionId);
+                disconnectedPlayer = result.player;
+                if (disconnectedPlayer != null && result.room != null)
+                {
+                    shouldReplaceWithBot = result.room.Phase == GamePhase.Playing;
+                    await BroadcastState(result.room);
+                }
             }
 
-            await Clients.Group(room.Code)
-                .SendAsync("PlayerLeft", Context.ConnectionId);
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, roomCode);
+
+            if (disconnectedPlayer != null)
+            {
+                await _hubContext.Clients.Group(roomCode)
+                    .SendAsync("PlayerLeft", disconnectedPlayer.Id);
+
+                if (shouldReplaceWithBot)
+                    QueueDisconnectedPlayerReplacement(roomCode, disconnectedPlayer.Id);
+            }
         }
         await base.OnDisconnectedAsync(ex);
+    }
+
+    private void QueueDisconnectedPlayerReplacement(string roomCode, string playerId)
+    {
+        _ = ReplaceDisconnectedPlayerAfterGrace(roomCode, playerId);
+    }
+
+    private async Task ReplaceDisconnectedPlayerAfterGrace(string roomCode, string playerId)
+    {
+        try
+        {
+            await Task.Delay(DisconnectReplacementGraceMs);
+
+            var room = _rooms.GetRoomByCode(roomCode);
+            if (room == null) return;
+
+            using (await LockRoom(room))
+            {
+                if (room.Phase != GamePhase.Playing) return;
+
+                var replacement = _rooms.ReplaceDisconnectedPlayerWithAi(roomCode, playerId);
+                if (replacement == null) return;
+
+                if (room.Players.Count == 0 || room.Players.All(p => p.IsAi))
+                {
+                    RemoveAiLogic(roomCode);
+                    return;
+                }
+
+                EnsureAiLogic(room, replacement);
+                room.Log.Add($"{replacement.Name} disconnected and was replaced by a bot.");
+                await BroadcastState(room);
+                await _hubContext.Clients.Group(roomCode).SendAsync("PlayerLeft", replacement.Id);
+                await RunAiTurn(room);
+            }
+        }
+        catch
+        {
+            // Background disconnect cleanup should never crash the hub pipeline.
+        }
     }
 
     // Lobby 
@@ -45,118 +116,176 @@ public class GameHub : Hub
     public async Task CreateRoom(string playerName, string playerId)
     {
         var room = _rooms.CreateRoom(playerId, Context.ConnectionId, playerName);
-        await Groups.AddToGroupAsync(Context.ConnectionId, room.Code);
-        await Clients.Caller.SendAsync("RoomCreated", room.Code);
-        await BroadcastState(room);
+        using (await LockRoom(room))
+        {
+            await Groups.AddToGroupAsync(Context.ConnectionId, room.Code);
+            await Clients.Caller.SendAsync("RoomCreated", room.Code);
+            await BroadcastState(room);
+        }
     }
 
-    public async Task JoinRoom(string code, string playerName, string playerId)
+    public async Task<bool> JoinRoom(string code, string playerName, string playerId)
     {
-        var (room, error) = _rooms.JoinRoom(code, playerId, Context.ConnectionId, playerName);
-        if (error != null) { await Clients.Caller.SendAsync("Error", error); return; }
+        var roomToJoin = _rooms.GetRoomByCode(code);
+        if (roomToJoin == null)
+        {
+            await Clients.Caller.SendAsync("Error", "Room not found.");
+            return false;
+        }
 
-        await Groups.AddToGroupAsync(Context.ConnectionId, room!.Code);
-        await BroadcastState(room);
+        using (await LockRoom(roomToJoin))
+        {
+            var (room, error) = _rooms.JoinRoom(code, playerId, Context.ConnectionId, playerName);
+            if (error != null)
+            {
+                await Clients.Caller.SendAsync("Error", error);
+                return false;
+            }
+
+            await Groups.AddToGroupAsync(Context.ConnectionId, room!.Code);
+            await BroadcastState(room);
+            return true;
+        }
     }
 
     public async Task ReconnectToRoom(string roomCode, string playerId)
     {
-        var (room, _, error) = _rooms.ReconnectPlayer(roomCode, playerId, Context.ConnectionId);
-        if (error != null) { await Clients.Caller.SendAsync("ReconnectFailed", error); return; }
+        var roomToJoin = _rooms.GetRoomByCode(roomCode);
+        if (roomToJoin == null)
+        {
+            await Clients.Caller.SendAsync("ReconnectFailed", "Room not found.");
+            return;
+        }
 
-        await Groups.AddToGroupAsync(Context.ConnectionId, room!.Code);
-        await BroadcastState(room);
+        using (await LockRoom(roomToJoin))
+        {
+            var (room, _, error) = _rooms.ReconnectPlayer(roomCode, playerId, Context.ConnectionId);
+            if (error != null) { await Clients.Caller.SendAsync("ReconnectFailed", error); return; }
+
+            await Groups.AddToGroupAsync(Context.ConnectionId, room!.Code);
+            await BroadcastState(room);
+        }
     }
 
     public async Task LeaveRoom()
     {
         var room = _rooms.GetRoomByPlayer(Context.ConnectionId);
-        var player = _rooms.GetPlayerByConnection(Context.ConnectionId);
-        if (room == null || player == null)
+        if (room == null)
         {
             await Clients.Caller.SendAsync("LeftRoom");
             return;
         }
 
-        var roomCode = room.Code;
-
-        if (room.Phase == GamePhase.Playing)
+        using (await LockRoom(room))
         {
-            var (replacementRoom, replacement) = _rooms.ReplacePlayerWithAi(Context.ConnectionId);
+            var player = _rooms.GetPlayerByConnection(Context.ConnectionId);
+            if (player == null)
+            {
+                await Clients.Caller.SendAsync("LeftRoom");
+                return;
+            }
+
+            var roomCode = room.Code;
+            if (room.Phase == GamePhase.Playing)
+            {
+                var (replacementRoom, replacement) = _rooms.ReplacePlayerWithAi(Context.ConnectionId);
+                await Groups.RemoveFromGroupAsync(Context.ConnectionId, roomCode);
+                await Clients.Caller.SendAsync("LeftRoom");
+
+                if (replacementRoom == null ||
+                    replacement == null ||
+                    replacementRoom.Players.Count == 0 ||
+                    replacementRoom.Players.All(p => p.IsAi))
+                {
+                    RemoveAiLogic(roomCode);
+                    return;
+                }
+
+                EnsureAiLogic(replacementRoom, replacement);
+                replacementRoom.Log.Add($"{replacement.Name} left the game and was replaced by a bot.");
+                await BroadcastState(replacementRoom);
+                await _hubContext.Clients.Group(roomCode).SendAsync("PlayerLeft", replacement.Id);
+                await RunAiTurn(replacementRoom);
+                return;
+            }
+
+            var removedIndex = room.Players.FindIndex(p => p.Id == player.Id);
+            var currentIndex = room.CurrentPlayerIndex;
+            var wasCurrentPlayer = room.CurrentPlayer?.Id == player.Id;
+            var (updatedRoom, removedPlayer) = _rooms.RemovePlayer(Context.ConnectionId);
             await Groups.RemoveFromGroupAsync(Context.ConnectionId, roomCode);
             await Clients.Caller.SendAsync("LeftRoom");
 
-            if (replacementRoom == null ||
-                replacement == null ||
-                replacementRoom.Players.Count == 0 ||
-                replacementRoom.Players.All(p => p.IsAi))
+            if (updatedRoom == null ||
+                removedPlayer == null ||
+                updatedRoom.Players.Count == 0 ||
+                updatedRoom.Players.All(p => p.IsAi))
+            {
+                RemoveAiLogic(roomCode);
                 return;
+            }
 
-            EnsureAiLogic(replacementRoom, replacement);
-            replacementRoom.Log.Add($"{replacement.Name} left the game and was replaced by a bot.");
-            await BroadcastState(replacementRoom);
-            await Clients.Group(roomCode).SendAsync("PlayerLeft", replacement.Id);
-            await RunAiTurn(replacementRoom);
-            return;
+            RepositionCurrentPlayer(updatedRoom, removedIndex, currentIndex, wasCurrentPlayer);
+            updatedRoom.Log.Add($"{removedPlayer.Name} left the game.");
+            await BroadcastState(updatedRoom);
+            await _hubContext.Clients.Group(roomCode).SendAsync("PlayerLeft", removedPlayer.Id);
+            await RunAiTurn(updatedRoom);
         }
-
-        var removedIndex = room.Players.FindIndex(p => p.Id == player.Id);
-        var currentIndex = room.CurrentPlayerIndex;
-        var wasCurrentPlayer = room.CurrentPlayer?.Id == player.Id;
-        var (updatedRoom, removedPlayer) = _rooms.RemovePlayer(Context.ConnectionId);
-        await Groups.RemoveFromGroupAsync(Context.ConnectionId, roomCode);
-        await Clients.Caller.SendAsync("LeftRoom");
-
-        if (updatedRoom == null ||
-            removedPlayer == null ||
-            updatedRoom.Players.Count == 0 ||
-            updatedRoom.Players.All(p => p.IsAi))
-            return;
-
-        RepositionCurrentPlayer(updatedRoom, removedIndex, currentIndex, wasCurrentPlayer);
-        updatedRoom.Log.Add($"{removedPlayer.Name} left the game.");
-        await BroadcastState(updatedRoom);
-        await Clients.Group(roomCode).SendAsync("PlayerLeft", removedPlayer.Id);
-        await RunAiTurn(updatedRoom);
     }
 
     public async Task AddAiPlayer(string roomCode)
     {
-        var requester = _rooms.GetPlayerByConnection(Context.ConnectionId);
-        if (requester == null) { await Clients.Caller.SendAsync("Error", "Player not found."); return; }
+        var roomToUpdate = _rooms.GetRoomByCode(roomCode);
+        if (roomToUpdate == null) { await Clients.Caller.SendAsync("Error", "Room not found."); return; }
 
-        var (room, error) = _rooms.AddAiPlayer(roomCode, requester.Id);
-        if (error != null) { await Clients.Caller.SendAsync("Error", error); return; }
+        using (await LockRoom(roomToUpdate))
+        {
+            var requester = _rooms.GetPlayerByConnection(Context.ConnectionId);
+            if (requester == null) { await Clients.Caller.SendAsync("Error", "Player not found."); return; }
 
-        var aiPlayer = room!.Players.Last(p => p.IsAi);
-        EnsureAiLogic(room, aiPlayer);
-        await BroadcastState(room);
+            var (room, error) = _rooms.AddAiPlayer(roomCode, requester.Id);
+            if (error != null) { await Clients.Caller.SendAsync("Error", error); return; }
+
+            var aiPlayer = room!.Players.Last(p => p.IsAi);
+            EnsureAiLogic(room, aiPlayer);
+            await BroadcastState(room);
+        }
     }
 
     public async Task RenameAiPlayer(string roomCode, string aiPlayerId, string name)
     {
-        var requester = _rooms.GetPlayerByConnection(Context.ConnectionId);
-        if (requester == null) { await Clients.Caller.SendAsync("Error", "Player not found."); return; }
+        var roomToUpdate = _rooms.GetRoomByCode(roomCode);
+        if (roomToUpdate == null) { await Clients.Caller.SendAsync("Error", "Room not found."); return; }
 
-        var (room, error) = _rooms.RenameAiPlayer(roomCode, requester.Id, aiPlayerId, name);
-        if (error != null) { await Clients.Caller.SendAsync("Error", error); return; }
+        using (await LockRoom(roomToUpdate))
+        {
+            var requester = _rooms.GetPlayerByConnection(Context.ConnectionId);
+            if (requester == null) { await Clients.Caller.SendAsync("Error", "Player not found."); return; }
 
-        await BroadcastState(room!);
+            var (room, error) = _rooms.RenameAiPlayer(roomCode, requester.Id, aiPlayerId, name);
+            if (error != null) { await Clients.Caller.SendAsync("Error", error); return; }
+
+            await BroadcastState(room!);
+        }
     }
 
     public async Task StartGame(string roomCode)
     {
         var room = _rooms.GetRoomByCode(roomCode);
-        var requester = _rooms.GetPlayerByConnection(Context.ConnectionId);
-        if (room == null || requester == null || room.HostId != requester.Id)
-        { await Clients.Caller.SendAsync("Error", "Only the host can start the game."); return; }
-        if (room.Players.Count < 3)
-        { await Clients.Caller.SendAsync("Error", "Need at least 3 players."); return; }
+        if (room == null) { await Clients.Caller.SendAsync("Error", "Room not found."); return; }
+        using (await LockRoom(room))
+        {
+            var requester = _rooms.GetPlayerByConnection(Context.ConnectionId);
+            if (requester == null || room.HostId != requester.Id)
+            { await Clients.Caller.SendAsync("Error", "Only the host can start the game."); return; }
+            if (room.Players.Count < 3)
+            { await Clients.Caller.SendAsync("Error", "Need at least 3 players."); return; }
 
-        StartRound(room);
-        _engine.BeginTurn(room); // ← deal drawn card to first player
-        await BroadcastState(room);
-        await RunAiTurn(room);
+            StartRound(room);
+            _engine.BeginTurn(room); // ← deal drawn card to first player
+            await BroadcastState(room);
+            await RunAiTurn(room);
+        }
     }
 
     // Gameplay 
@@ -167,47 +296,55 @@ public class GameHub : Hub
         var room = _rooms.GetRoomByCode(roomCode);
         if (room == null) { await Clients.Caller.SendAsync("Error", "Room not found."); return; }
 
-        var player = _rooms.GetPlayerByConnection(Context.ConnectionId);
-        if (player == null || room.CurrentPlayer?.Id != player.Id)
-        { await Clients.Caller.SendAsync("Error", "It's not your turn."); return; }
-
-        if (!Enum.TryParse<CardType>(cardType, out var ct))
-        { await Clients.Caller.SendAsync("Error", "Invalid card."); return; }
-
-        CardType? guess = guessedCard != null && Enum.TryParse<CardType>(guessedCard, out var g) ? g : null;
-
-        try
+        using (await LockRoom(room))
         {
-            _engine.PlayCard(room, player.Id, ct, targetId, guess);
-        }
-        catch (Exception ex)
-        {
-            await Clients.Caller.SendAsync("Error", ex.Message);
-            return;
-        }
+            var player = _rooms.GetPlayerByConnection(Context.ConnectionId);
+            if (player == null || room.CurrentPlayer?.Id != player.Id)
+            { await Clients.Caller.SendAsync("Error", "It's not your turn."); return; }
 
-        // If Priest was played, send the target's card privately to the actor
-        if (ct == CardType.Priest && targetId != null && targetId != player.Id)
-        {
-            var target = room.Players.FirstOrDefault(p => p.Id == targetId);
-            if (target is { Hand: not null, IsEliminated: false, IsProtected: false })
-                await Clients.Caller.SendAsync("PriestReveal", targetId, target.Hand.Type.ToString());
-        }
+            if (!Enum.TryParse<CardType>(cardType, out var ct))
+            { await Clients.Caller.SendAsync("Error", "Invalid card."); return; }
 
-        await HandlePostPlay(room);
+            CardType? guess = guessedCard != null && Enum.TryParse<CardType>(guessedCard, out var g) ? g : null;
+
+            try
+            {
+                _engine.PlayCard(room, player.Id, ct, targetId, guess);
+            }
+            catch (Exception ex)
+            {
+                await Clients.Caller.SendAsync("Error", ex.Message);
+                return;
+            }
+
+            // If Priest was played, send the target's card privately to the actor
+            if (ct == CardType.Priest && targetId != null && targetId != player.Id)
+            {
+                var target = room.Players.FirstOrDefault(p => p.Id == targetId);
+                if (target is { Hand: not null, IsEliminated: false, IsProtected: false })
+                    await Clients.Caller.SendAsync("PriestReveal", targetId, target.Hand.Type.ToString());
+            }
+
+            await HandlePostPlay(room);
+        }
     }
 
     public async Task StartNextRound(string roomCode)
     {
         var room = _rooms.GetRoomByCode(roomCode);
-        var requester = _rooms.GetPlayerByConnection(Context.ConnectionId);
-        if (room == null || requester == null || room.HostId != requester.Id) return;
-        if (room.Phase != GamePhase.RoundOver) return;
+        if (room == null) return;
 
-        StartRound(room);
-        _engine.BeginTurn(room); // ← deal drawn card to first player
-        await BroadcastState(room);
-        await RunAiTurn(room);
+        using (await LockRoom(room))
+        {
+            var requester = _rooms.GetPlayerByConnection(Context.ConnectionId);
+            if (requester == null || room.HostId != requester.Id) return;
+            if (room.Phase != GamePhase.RoundOver) return;
+
+            StartRound(room);
+            _engine.BeginTurn(room); // ← deal drawn card to first player
+            await BroadcastState(room);
+            await RunAiTurn(room);
+        }
     }
 
     // Helpers 
@@ -215,22 +352,25 @@ public class GameHub : Hub
     private void StartRound(GameRoom room)
     {
         _engine.StartRound(room);
-        if (!AiPlayers.ContainsKey(room.Code))
-            AiPlayers[room.Code] = new Dictionary<string, AiPlayer>();
 
-        // Reset every AI player's knowledge for the new round
+        var roomAiLogic = new ConcurrentDictionary<string, AiPlayer>();
         foreach (var aiPlayer in room.Players.Where(p => p.IsAi))
-            EnsureAiLogic(room, aiPlayer);
+            roomAiLogic[aiPlayer.Id] = new AiPlayer();
+
+        AiPlayers[room.Code] = roomAiLogic;
     }
 
-    private static void EnsureAiLogic(GameRoom room, Player aiPlayer)
+    private static AiPlayer EnsureAiLogic(GameRoom room, Player aiPlayer)
     {
-        if (!AiPlayers.ContainsKey(room.Code))
-            AiPlayers[room.Code] = new Dictionary<string, AiPlayer>();
+        var roomAiLogic = AiPlayers.GetOrAdd(
+            room.Code,
+            _ => new ConcurrentDictionary<string, AiPlayer>());
 
-        if (!AiPlayers[room.Code].ContainsKey(aiPlayer.Id))
-            AiPlayers[room.Code][aiPlayer.Id] = new AiPlayer();
+        return roomAiLogic.GetOrAdd(aiPlayer.Id, _ => new AiPlayer());
     }
+
+    private static void RemoveAiLogic(string roomCode) =>
+        AiPlayers.TryRemove(roomCode, out _);
 
     private async Task HandlePostPlay(GameRoom room)
     {
@@ -246,6 +386,9 @@ public class GameHub : Hub
             await BroadcastState(room);
             return;
         }
+
+        await BroadcastState(room);
+        await Task.Delay(TurnReadPauseMs);
 
         _engine.BeginTurn(room);
         await BroadcastState(room);
@@ -270,6 +413,9 @@ public class GameHub : Hub
             {
                 if (room.ChancellorPlayerId != ai.Id)
                     break;
+
+                await BroadcastState(room);
+                await Task.Delay(TurnReadPauseMs);
 
                 if (!ResolveAiChancellor(room, ai))
                 {
@@ -332,6 +478,9 @@ public class GameHub : Hub
             // AI resolves Chancellor automatically
             if (room.PendingAction == GameEngine.ChancellorPendingAction)
             {
+                await BroadcastState(room);
+                await Task.Delay(TurnReadPauseMs);
+
                 if (!ResolveAiChancellor(room, ai))
                 {
                     _engine.AdvanceTurn(room);
@@ -346,6 +495,9 @@ public class GameHub : Hub
                 await BroadcastState(room);
                 continue;
             }
+
+            await BroadcastState(room);
+            await Task.Delay(TurnReadPauseMs);
 
             _engine.BeginTurn(room);
             await BroadcastState(room);
@@ -401,29 +553,34 @@ public class GameHub : Hub
         {
             if (player.ConnectionId == null) continue;
             var dto = BuildStateDto(room, player.Id);
-            await Clients.Client(player.ConnectionId).SendAsync("GameStateUpdated", dto);
+            await _hubContext.Clients.Client(player.ConnectionId).SendAsync("GameStateUpdated", dto);
         }
     }
-    
+
     public async Task ResolveChancellor(string roomCode, string cardTypeToKeep)
     {
         var room = _rooms.GetRoomByCode(roomCode);
-        if (room == null || room.PendingAction != GameEngine.ChancellorPendingAction) return;
-        var player = _rooms.GetPlayerByConnection(Context.ConnectionId);
-        if (player == null || room.ChancellorPlayerId != player.Id) return;
+        if (room == null) return;
 
-        if (!Enum.TryParse<CardType>(cardTypeToKeep, out var keep)) return;
-
-        var kept = room.ChancellorOptions.FirstOrDefault(c => c.Type == keep);
-        if (kept == null)
+        using (await LockRoom(room))
         {
-            await Clients.Caller.SendAsync("Error", "Invalid card choice.");
-            return;
-        }
-        ResolveChancellorChoice(room, player, kept);
+            if (room.PendingAction != GameEngine.ChancellorPendingAction) return;
+            var player = _rooms.GetPlayerByConnection(Context.ConnectionId);
+            if (player == null || room.ChancellorPlayerId != player.Id) return;
 
-        _engine.AdvanceTurn(room);
-        await HandlePostPlay(room);
+            if (!Enum.TryParse<CardType>(cardTypeToKeep, out var keep)) return;
+
+            var kept = room.ChancellorOptions.FirstOrDefault(c => c.Type == keep);
+            if (kept == null)
+            {
+                await Clients.Caller.SendAsync("Error", "Invalid card choice.");
+                return;
+            }
+            ResolveChancellorChoice(room, player, kept);
+
+            _engine.AdvanceTurn(room);
+            await HandlePostPlay(room);
+        }
     }
 
     private static void ResolveChancellorChoice(GameRoom room, Player player, Card kept)
@@ -486,7 +643,7 @@ public class GameHub : Hub
             viewer.Discards,
             Hand: viewer.Hand
         );
-        
+
 
         return new GameStateDto(
             room.Code, room.Phase,
