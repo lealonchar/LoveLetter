@@ -77,8 +77,10 @@ function setupListeners() {
   })
 
   on('ReconnectFailed', (_msg) => {
+    const isStartupRestore = state.isConnecting
     clearRoomState()
-    state.pendingError = _msg
+    if (!isStartupRestore)
+      state.pendingError = _msg
   })
 
   on('PriestReveal', (targetId, card) => {
