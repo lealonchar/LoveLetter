@@ -273,6 +273,24 @@ public class GameHub : Hub
         }
     }
 
+    public async Task RemoveAiPlayer(string roomCode, string aiPlayerId)
+    {
+        var roomToUpdate = _rooms.GetRoomByCode(roomCode);
+        if (roomToUpdate == null) { await Clients.Caller.SendAsync("Error", "Room not found."); return; }
+
+        using (await LockRoom(roomToUpdate))
+        {
+            var requester = _rooms.GetPlayerByConnection(Context.ConnectionId);
+            if (requester == null) { await Clients.Caller.SendAsync("Error", "Player not found."); return; }
+
+            var (room, removedPlayer, error) = _rooms.RemoveAiPlayer(roomCode, requester.Id, aiPlayerId);
+            if (error != null) { await Clients.Caller.SendAsync("Error", error); return; }
+
+            RemoveAiLogic(room!.Code, removedPlayer!.Id);
+            await BroadcastState(room);
+        }
+    }
+
     public async Task StartGame(string roomCode)
     {
         var room = _rooms.GetRoomByCode(roomCode);
@@ -377,6 +395,12 @@ public class GameHub : Hub
 
     private static void RemoveAiLogic(string roomCode) =>
         AiPlayers.TryRemove(roomCode, out _);
+
+    private static void RemoveAiLogic(string roomCode, string aiPlayerId)
+    {
+        if (AiPlayers.TryGetValue(roomCode, out var roomAiLogic))
+            roomAiLogic.TryRemove(aiPlayerId, out _);
+    }
 
     private async Task HandlePostPlay(GameRoom room)
     {

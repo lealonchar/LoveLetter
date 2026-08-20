@@ -3,14 +3,17 @@
     <div :class="['opp-card-zone', !player.discards?.length ? 'opp-card-zone--hand-only' : '', player.isEliminated ? 'opp-card-zone--discard-only' : '']">
       <div class="opp-discards" v-if="player.discards?.length">
         <button
-            v-for="(card, i) in visibleDiscards"
-            :key="i"
             type="button"
-            class="opp-discard"
-            :style="discardStyle(i, visibleDiscards.length)"
-            :title="`${card.name} - double tap to zoom`"
-            @click="handleDiscardTap(i, card)">
-          <CardFace :card="card" size="sm" />
+            class="opp-discard-stack"
+            :title="`${player.name}'s played cards`"
+            @click="handleDiscardStackTap">
+          <span
+              v-for="(card, i) in visibleDiscards"
+              :key="i"
+              class="opp-discard-layer"
+              :style="discardStyle(i, visibleDiscards.length)">
+            <CardFace :card="card" size="sm" />
+          </span>
         </button>
       </div>
 
@@ -52,28 +55,31 @@ const props = defineProps({
   isCurrent: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['zoom-card'])
+const emit = defineEmits(['zoom-cards'])
 
 const { state } = useGameStore()
 const maxTokens = computed(() => state.gameState?.roundsToWin ?? 7)
 const visibleDiscards = computed(() => props.player.discards?.slice(-4) ?? [])
-let lastTappedDiscardKey = null
+let lastTappedDiscardStack = false
 let lastDiscardTapAt = 0
 
-function handleDiscardTap(index, card) {
-  const key = `${props.player.id}-${index}`
+function handleDiscardStackTap() {
   const now = Date.now()
-  const isDoubleTap = lastTappedDiscardKey === key && now - lastDiscardTapAt <= 360
+  const isDoubleTap = lastTappedDiscardStack && now - lastDiscardTapAt <= 360
 
-  lastTappedDiscardKey = key
+  lastTappedDiscardStack = true
   lastDiscardTapAt = now
 
   if (!isDoubleTap)
     return
 
-  lastTappedDiscardKey = null
+  lastTappedDiscardStack = false
   lastDiscardTapAt = 0
-  emit('zoom-card', card)
+  emit('zoom-cards', {
+    cards: props.player.discards ?? [],
+    startIndex: Math.max((props.player.discards?.length ?? 1) - 1, 0),
+    title: `${props.player.name}'s played cards`,
+  })
 }
 
 function discardStyle(index, total) {
@@ -135,16 +141,25 @@ function discardStyle(index, total) {
   transform: translateX(-50%);
 }
 
-.opp-discard {
+.opp-discard-stack {
   position: absolute;
   top: 2px;
   left: 50%;
+  width: 76px;
+  height: 76px;
   margin-left: -32px;
   padding: 0;
   border: 0;
   background: transparent;
   border-radius: 8px;
   cursor: zoom-in;
+}
+
+.opp-discard-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
 }
 
 .opp-hand {
@@ -276,7 +291,9 @@ function discardStyle(index, total) {
     height: 68px;
   }
 
-  .opp-discard {
+  .opp-discard-stack {
+    width: 68px;
+    height: 68px;
     margin-left: -24px;
   }
 

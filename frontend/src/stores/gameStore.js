@@ -149,6 +149,16 @@ async function renameAiPlayer(aiPlayerId, name) {
   await invoke('RenameAiPlayer', state.roomCode, aiPlayerId, name)
 }
 
+async function removeAiPlayer(aiPlayerId) {
+  try {
+    state.pendingError = null
+    await invoke('RemoveAiPlayer', state.roomCode, aiPlayerId)
+  } catch (error) {
+    state.pendingError = error?.message || 'Could not remove AI player.'
+    setTimeout(() => { state.pendingError = null }, 4000)
+  }
+}
+
 async function startGame() {
   await invoke('StartGame', state.roomCode)
 }
@@ -187,6 +197,7 @@ export function useGameStore() {
     joinRoom,
     addAiPlayer,
     renameAiPlayer,
+    removeAiPlayer,
     startGame,
     playCard,
     startNextRound,

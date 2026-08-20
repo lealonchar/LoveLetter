@@ -33,6 +33,7 @@
           :player="p"
           :is-current="isCurrentPlayer(p)"
           @zoom-card="openCardZoom"
+          @zoom-cards="openCardCarousel"
       />
     </div>
 
@@ -266,10 +267,32 @@
           aria-modal="true"
           @click.self="closeCardZoom">
         <div class="card-zoom-modal">
-          <button type="button" class="zoom-close-btn" @click="closeCardZoom">
-            Close
-          </button>
-          <CardFace :card="zoomedCard" size="xl" />
+          <div class="card-zoom-head">
+            <p v-if="zoomTitle" class="zoom-title">{{ zoomTitle }}</p>
+            <button type="button" class="zoom-close-btn" @click="closeCardZoom">
+              Close
+            </button>
+          </div>
+          <div
+              ref="zoomTrack"
+              :class="['card-zoom-carousel', zoomCards.length <= 1 ? 'card-zoom-carousel--solo' : '']"
+              @scroll="syncZoomIndexFromScroll">
+            <div
+                v-for="(card, index) in zoomCards"
+                :key="`${card.type}-${index}`"
+                :class="['zoom-slide', index === zoomIndex ? 'zoom-slide--active' : '']">
+              <CardFace :card="card" size="xl" />
+            </div>
+          </div>
+          <div v-if="zoomCards.length > 1" class="zoom-dots" aria-label="Played card carousel">
+            <button
+                v-for="(_, index) in zoomCards"
+                :key="index"
+                type="button"
+                :class="['zoom-dot', index === zoomIndex ? 'zoom-dot--active' : '']"
+                :aria-label="`Show card ${index + 1}`"
+                @click="scrollZoomTo(index)" />
+          </div>
         </div>
       </div>
     </Transition>
@@ -277,7 +300,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { nextTick, ref, computed, watch } from 'vue'
 import { useGameStore } from '../stores/gameStore'
 import CardFace from './CardFace.vue'
 import OpponentSeat from './OpponentSeat.vue'
@@ -294,7 +317,11 @@ const chancellorReturnOrder = ref([])
 const logOpen = ref(false)
 const cardReferenceOpen = ref(false)
 const leaveConfirmOpen = ref(false)
-const zoomedCard = ref(null)
+const zoomCards = ref([])
+const zoomIndex = ref(0)
+const zoomTitle = ref('')
+const zoomTrack = ref(null)
+const zoomedCard = computed(() => zoomCards.value[zoomIndex.value] ?? null)
 const tableEvent = ref(null)
 const tableEventKey = ref(0)
 let tableEventTimer = null
@@ -498,11 +525,55 @@ function openLeaveConfirm() {
 
 function openCardZoom(card) {
   if (!card) return
-  zoomedCard.value = card
+  openCardCarousel({ cards: [card], startIndex: 0, title: card.name })
+}
+
+function openCardCarousel({ cards, startIndex = 0, title = '' }) {
+  const availableCards = Array.isArray(cards) ? cards.filter(Boolean) : []
+  if (availableCards.length === 0) return
+
+  zoomCards.value = availableCards
+  zoomIndex.value = Math.min(Math.max(startIndex, 0), availableCards.length - 1)
+  zoomTitle.value = title
+  nextTick(() => scrollZoomTo(zoomIndex.value, 'auto'))
+}
+
+function scrollZoomTo(index, behavior = 'smooth') {
+  const track = zoomTrack.value
+  const slide = track?.children?.[index]
+  if (!track || !slide) return
+
+  zoomIndex.value = index
+  track.scrollTo({
+    left: slide.offsetLeft - (track.clientWidth - slide.clientWidth) / 2,
+    behavior,
+  })
+}
+
+function syncZoomIndexFromScroll() {
+  const track = zoomTrack.value
+  if (!track || zoomCards.value.length < 2) return
+
+  const trackCenter = track.scrollLeft + track.clientWidth / 2
+  let closestIndex = 0
+  let closestDistance = Number.POSITIVE_INFINITY
+
+  Array.from(track.children).forEach((slide, index) => {
+    const slideCenter = slide.offsetLeft + slide.clientWidth / 2
+    const distance = Math.abs(slideCenter - trackCenter)
+    if (distance < closestDistance) {
+      closestDistance = distance
+      closestIndex = index
+    }
+  })
+
+  zoomIndex.value = closestIndex
 }
 
 function closeCardZoom() {
-  zoomedCard.value = null
+  zoomCards.value = []
+  zoomIndex.value = 0
+  zoomTitle.value = ''
 }
 
 async function confirmLeave() {
@@ -1216,11 +1287,96 @@ async function confirmLeave() {
 }
 
 .card-zoom-modal {
+  --zoom-card-width: min(78vw, 280px);
   position: relative;
   display: grid;
   justify-items: center;
   gap: 12px;
-  max-width: min(100%, 360px);
+  width: min(100%, 720px);
+  max-width: 720px;
+}
+
+.card-zoom-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.zoom-title {
+  min-width: 0;
+  margin: 0;
+  color: #ffe4e6;
+  font-size: 13px;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-zoom-carousel {
+  width: 100%;
+  display: flex;
+  gap: 18px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  scroll-padding-inline: calc((100% - var(--zoom-card-width)) / 2);
+  padding: 2px calc((100% - var(--zoom-card-width)) / 2) 8px;
+  scrollbar-width: none;
+}
+
+.card-zoom-carousel::-webkit-scrollbar {
+  display: none;
+}
+
+.card-zoom-carousel--solo {
+  justify-content: center;
+  overflow: visible;
+  padding-inline: 0;
+}
+
+.zoom-slide {
+  flex: 0 0 var(--zoom-card-width);
+  display: grid;
+  justify-items: center;
+  scroll-snap-align: center;
+  opacity: 0.66;
+  transform: scale(0.94);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.zoom-slide--active {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.zoom-slide :deep(.card-face--xl) {
+  width: var(--zoom-card-width);
+  height: calc(var(--zoom-card-width) * 1.4);
+}
+
+.zoom-dots {
+  display: flex;
+  justify-content: center;
+  gap: 7px;
+  min-height: 16px;
+}
+
+.zoom-dot {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(251, 113, 133, 0.7);
+  background: transparent;
+  cursor: pointer;
+}
+
+.zoom-dot--active {
+  background: #fb7185;
+  border-color: #fecdd3;
 }
 
 .zoom-close-btn {
@@ -1237,6 +1393,13 @@ async function confirmLeave() {
 
 .zoom-close-btn:hover {
   background: rgba(159, 18, 57, 0.42);
+}
+
+@media (max-width: 540px) {
+  .card-zoom-modal {
+    --zoom-card-width: min(66vw, 250px);
+    width: min(100%, 500px);
+  }
 }
 
 .leave-modal {

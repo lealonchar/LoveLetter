@@ -126,6 +126,26 @@ public class RoomManager
         return (room, null);
     }
 
+    public (GameRoom? room, Player? removedPlayer, string? error) RemoveAiPlayer(
+        string code,
+        string requesterId,
+        string aiPlayerId)
+    {
+        if (!_rooms.TryGetValue(code.ToUpper(), out var room))
+            return (null, null, "Room not found.");
+        if (room.HostId != requesterId)
+            return (null, null, "Only the host can remove AI players.");
+        if (room.Phase != GamePhase.Lobby)
+            return (null, null, "AI players can only be removed in the lobby.");
+
+        var ai = room.Players.FirstOrDefault(p => p.Id == aiPlayerId && p.IsAi);
+        if (ai == null)
+            return (null, null, "AI player not found.");
+
+        room.Players.Remove(ai);
+        return (room, ai, null);
+    }
+
     public GameRoom? GetRoomByCode(string? code) =>
         string.IsNullOrWhiteSpace(code)
             ? null

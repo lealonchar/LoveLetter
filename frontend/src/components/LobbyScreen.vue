@@ -29,6 +29,17 @@
           <span v-if="player.id === state.gameState?.hostId" class="host-badge">
             host
           </span>
+
+          <button
+              v-if="isHost && player.isAi"
+              type="button"
+              class="remove-ai-btn"
+              :aria-label="`Remove ${player.name}`"
+              :title="`Remove ${player.name}`"
+              @mousedown.prevent.stop
+              @click.stop="removeAi(player.id)">
+            ×
+          </button>
         </div>
 
         <p class="text-rose-500 text-sm">
@@ -87,7 +98,14 @@
 import { computed, ref } from 'vue'
 import { useGameStore } from '../stores/gameStore'
 
-const { state, addAiPlayer, renameAiPlayer, startGame, leaveGame } = useGameStore()
+const {
+  state,
+  addAiPlayer,
+  renameAiPlayer,
+  removeAiPlayer: removeAiPlayerAction,
+  startGame,
+  leaveGame,
+} = useGameStore()
 const leaveConfirmOpen = ref(false)
 
 const isHost = computed(() => {
@@ -100,6 +118,10 @@ async function renameAi(aiPlayerId, rawName) {
   await renameAiPlayer(aiPlayerId, name)
 }
 
+async function removeAi(aiPlayerId) {
+  await removeAiPlayerAction(aiPlayerId)
+}
+
 async function confirmLeave() {
   leaveConfirmOpen.value = false
   await leaveGame()
@@ -109,7 +131,7 @@ async function confirmLeave() {
 <style scoped>
 .player-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 10px;
   background: rgba(159, 18, 57, 0.32);
@@ -163,6 +185,26 @@ async function confirmLeave() {
   font-size: 11px;
   font-weight: 700;
   padding: 3px 7px;
+}
+
+.remove-ai-btn {
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(251, 113, 133, 0.34);
+  background: rgba(76, 5, 25, 0.48);
+  color: #fecdd3;
+  border-radius: 8px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 800;
+  cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease;
+}
+
+.remove-ai-btn:hover {
+  background: rgba(159, 18, 57, 0.5);
+  border-color: rgba(251, 113, 133, 0.58);
 }
 
 .leave-room-btn {
