@@ -16,5 +16,7 @@ public record GameStateDto(
     int RoundsToWin,
     string? PendingAction,
     List<Card> ChancellorOptions,
+    List<string> RoundWinnerIds,
+    List<string> GameWinnerIds,
     Card? DrawnCard
 );

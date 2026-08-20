@@ -159,8 +159,8 @@ async function startNextRound() {
   await invoke('StartNextRound', state.roomCode)
 }
 
-async function resolveChancellor(cardType) {
-  await invoke('ResolveChancellor', state.roomCode, cardType)
+async function resolveChancellor(cardIndex, returnOrder = []) {
+  await invoke('ResolveChancellor', state.roomCode, cardIndex, returnOrder)
 }
 
 async function leaveGame() {

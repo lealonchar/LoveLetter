@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using LoveLetter.Domain.Enums;
 using LoveLetter.Domain.Models;
 
@@ -50,7 +53,8 @@ public class AiPlayer
         EvaluatePlay(GameRoom room, Player me, Card cardToPlay, Card cardToKeep)
     {
         var targets = ValidTargets(room, me).ToList();
-        var deckPressure = room.DrawPile.Count <= Math.Max(2, room.Players.Count);
+        var deckPressureThreshold = room.Players.Count < 2 ? 2 : room.Players.Count;
+        var deckPressure = room.DrawPile.Count <= deckPressureThreshold;
 
         return cardToPlay.Type switch
         {
@@ -234,8 +238,11 @@ public class AiPlayer
         return 4.4 + Math.Min(1.5, player.Discards.Count * 0.2);
     }
 
-    private static int ThreatScore(Player player) =>
-        player.Tokens * 5 + Math.Min(6, player.Discards.Count);
+    private static int ThreatScore(Player player)
+    {
+        var discardThreat = player.Discards.Count > 6 ? 6 : player.Discards.Count;
+        return player.Tokens * 5 + discardThreat;
+    }
 
     private static int CardValue(CardType type) => (int)type;
 
@@ -254,7 +261,8 @@ public class AiPlayer
             .Select(kv =>
             {
                 seen.TryGetValue(kv.Key, out var used);
-                return (type: kv.Key, remaining: Math.Max(0, kv.Value - used));
+                var remaining = kv.Value - used;
+                return (type: kv.Key, remaining: remaining < 0 ? 0 : remaining);
             })
             .Where(x => x.remaining > 0)
             .OrderByDescending(x => x.remaining * (CardValue(x.type) + 1))

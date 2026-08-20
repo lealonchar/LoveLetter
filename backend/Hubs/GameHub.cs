@@ -450,20 +450,11 @@ public class GameHub : Hub
                 _engine.PlayCard(room, ai.Id, card, target, guess);
                 UpdateAiKnowledgeAfterPlay(room, aiLogic, card, target);
             }
-            catch
+            catch (Exception ex)
             {
-                if (room.DrawnCard == null)
-                    break;
-
-                try
+                if (!TryPlayAiFallback(room, ai, aiLogic, out var fallbackError))
                 {
-                    var fallbackCard = room.DrawnCard.Type;
-                    _engine.PlayCard(room, ai.Id, fallbackCard, null, null);
-                    UpdateAiKnowledgeAfterPlay(room, aiLogic, fallbackCard, null);
-                }
-                catch
-                {
-                    room.Log.Add($"{ai.Name} could not play a valid card and skipped their turn.");
+                    room.Log.Add($"{ai.Name} could not play a valid card ({fallbackError ?? ex.Message}) and skipped their turn.");
                     room.DrawnCard = null;
                     _engine.AdvanceTurn(room);
                     if (room.Phase == GamePhase.Playing)
@@ -506,6 +497,50 @@ public class GameHub : Hub
         await BroadcastState(room);
     }
 
+    private bool TryPlayAiFallback(GameRoom room, Player ai, AiPlayer aiLogic, out string? error)
+    {
+        error = null;
+        var fallbackCards = GetAiFallbackCards(room, ai).ToList();
+        if (fallbackCards.Count == 0)
+            return false;
+
+        foreach (var fallbackCard in fallbackCards)
+        {
+            try
+            {
+                _engine.PlayCard(room, ai.Id, fallbackCard, null, null);
+                UpdateAiKnowledgeAfterPlay(room, aiLogic, fallbackCard, null);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+            }
+        }
+
+        return false;
+    }
+
+    private static IEnumerable<CardType> GetAiFallbackCards(GameRoom room, Player ai)
+    {
+        if (ai.Hand == null || room.DrawnCard == null)
+            yield break;
+
+        if (MustPlayCountess(ai.Hand.Type, room.DrawnCard.Type))
+        {
+            yield return CardType.Countess;
+            yield break;
+        }
+
+        yield return room.DrawnCard.Type;
+        if (ai.Hand.Type != room.DrawnCard.Type)
+            yield return ai.Hand.Type;
+    }
+
+    private static bool MustPlayCountess(CardType a, CardType b) =>
+        (a == CardType.Countess && (b == CardType.King || b == CardType.Prince)) ||
+        (b == CardType.Countess && (a == CardType.King || a == CardType.Prince));
+
     private static void UpdateAiKnowledgeAfterPlay(
         GameRoom room,
         AiPlayer aiLogic,
@@ -533,7 +568,10 @@ public class GameHub : Hub
 
     private static bool ResolveAiChancellor(GameRoom room, Player ai)
     {
-        var best = room.ChancellorOptions.OrderByDescending(c => c.Value).FirstOrDefault();
+        var best = room.ChancellorOptions
+            .Select((card, index) => new { card, index })
+            .OrderByDescending(option => option.card.Value)
+            .FirstOrDefault();
         if (best == null)
         {
             ClearPendingChancellor(room);
@@ -541,8 +579,7 @@ public class GameHub : Hub
             return false;
         }
 
-        ResolveChancellorChoice(room, ai, best);
-        return true;
+        return ResolveChancellorChoice(room, ai, best.index, null);
     }
 
 
@@ -557,7 +594,7 @@ public class GameHub : Hub
         }
     }
 
-    public async Task ResolveChancellor(string roomCode, string cardTypeToKeep)
+    public async Task ResolveChancellor(string roomCode, int cardIndexToKeep, List<int>? returnCardIndexes)
     {
         var room = _rooms.GetRoomByCode(roomCode);
         if (room == null) return;
@@ -568,31 +605,68 @@ public class GameHub : Hub
             var player = _rooms.GetPlayerByConnection(Context.ConnectionId);
             if (player == null || room.ChancellorPlayerId != player.Id) return;
 
-            if (!Enum.TryParse<CardType>(cardTypeToKeep, out var keep)) return;
-
-            var kept = room.ChancellorOptions.FirstOrDefault(c => c.Type == keep);
-            if (kept == null)
+            if (!ResolveChancellorChoice(room, player, cardIndexToKeep, returnCardIndexes))
             {
                 await Clients.Caller.SendAsync("Error", "Invalid card choice.");
                 return;
             }
-            ResolveChancellorChoice(room, player, kept);
 
             _engine.AdvanceTurn(room);
             await HandlePostPlay(room);
         }
     }
 
-    private static void ResolveChancellorChoice(GameRoom room, Player player, Card kept)
+    private static bool ResolveChancellorChoice(
+        GameRoom room,
+        Player player,
+        int keepIndex,
+        IReadOnlyCollection<int>? requestedReturnIndexes)
     {
-        var returns = room.ChancellorOptions.Where(c => c != kept).ToList();
+        if (keepIndex < 0 || keepIndex >= room.ChancellorOptions.Count)
+            return false;
 
+        if (!TryBuildChancellorReturnOrder(room, keepIndex, requestedReturnIndexes, out var returnIndexes))
+            return false;
+
+        var kept = room.ChancellorOptions[keepIndex];
         player.Hand = kept;
-        foreach (var card in returns)
-            room.DrawPile.Add(card);
+        foreach (var index in returnIndexes)
+            room.DrawPile.Add(room.ChancellorOptions[index]);
 
         ClearPendingChancellor(room);
-        room.Log.Add($"{player.Name} kept a card and returned {returns.Count} to the bottom of the deck.");
+        room.Log.Add($"{player.Name} kept a card and returned {returnIndexes.Count} to the bottom of the deck.");
+        return true;
+    }
+
+    private static bool TryBuildChancellorReturnOrder(
+        GameRoom room,
+        int keepIndex,
+        IReadOnlyCollection<int>? requestedReturnIndexes,
+        out List<int> returnIndexes)
+    {
+        var expectedIndexes = Enumerable.Range(0, room.ChancellorOptions.Count)
+            .Where(index => index != keepIndex)
+            .ToList();
+
+        if (requestedReturnIndexes is null || requestedReturnIndexes.Count == 0)
+        {
+            returnIndexes = expectedIndexes;
+            return true;
+        }
+
+        returnIndexes = requestedReturnIndexes.ToList();
+        if (returnIndexes.Count != expectedIndexes.Count)
+            return false;
+
+        var expected = expectedIndexes.ToHashSet();
+        var seen = new HashSet<int>();
+        foreach (var index in returnIndexes)
+        {
+            if (!expected.Contains(index) || !seen.Add(index))
+                return false;
+        }
+
+        return true;
     }
 
     private static void ClearPendingChancellor(GameRoom room)
@@ -657,6 +731,8 @@ public class GameHub : Hub
             room.RoundsToWin,
             room.PendingAction,
             viewerId == room.ChancellorPlayerId ? room.ChancellorOptions : [],
+            room.RoundWinnerIds,
+            room.GameWinnerIds,
             DrawnCard: room.CurrentPlayer?.Id == viewerId ? room.DrawnCard : null
         );
     }

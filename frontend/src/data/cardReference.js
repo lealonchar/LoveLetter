@@ -53,7 +53,7 @@ export const cardReference = [
     value: 6,
     count: 2,
     description:
-      'Draw 2 cards from the deck if possible, then choose 1 card to keep from your hand and the drawn cards. Return the cards you do not keep to the bottom of the deck.',
+      'Draw 2 cards from the deck if possible, then choose 1 card to keep from your hand and the drawn cards. Return the cards you do not keep to the bottom of the deck in any order.',
   },
   {
     type: 'King',

@@ -67,7 +67,7 @@
           <div class="rules-content">
             <section class="rules-section">
               <h3>Goal</h3>
-              <p>Win rounds to gain affection tokens. With 3 players you need 5 tokens. With 4 or more players you need 4 tokens.</p>
+              <p>Win rounds to gain affection tokens. With 3 players you need 5 tokens, with 4 players you need 4 tokens, and with 5 or 6 players you need 3 tokens.</p>
             </section>
 
             <section class="rules-section">
@@ -77,7 +77,7 @@
 
             <section class="rules-section">
               <h3>Round end</h3>
-              <p>A round ends when only 1 player is still in, or when the draw pile is empty. If the pile is empty, the highest hand wins. Ties use discard values.</p>
+              <p>A round ends when only 1 player is still in, or when the draw pile is empty. If the pile is empty, the highest hand wins. If players tie for the highest hand, all tied players win the round.</p>
             </section>
 
             <section class="rules-section">

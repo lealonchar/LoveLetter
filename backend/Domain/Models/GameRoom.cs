@@ -17,14 +17,18 @@ public class GameRoom
     public int CurrentPlayerIndex { get; set; }
     public Card? DrawnCard { get; set; } // Card drawn this turn (before play)
     public string? PendingAction { get; set; } // Waiting for secondary input
-    public int RoundsToWin => Players.Count switch { 2 => 7, 3 => 5, _ => 4 };
+    public int RoundsToWin => Players.Count switch { 2 => 6, 3 => 5, 4 => 4, _ => 3 };
+    public List<string> RoundWinnerIds { get; set; } = [];
+    public List<string> GameWinnerIds { get; set; } = [];
     public List<string> Log { get; set; } = [];
     public List<Card> ChancellorOptions { get; set; } = [];
     public string? ChancellorPlayerId { get; set; }
     public SemaphoreSlim StateLock { get; } = new(1, 1);
 
     public Player? CurrentPlayer =>
-        Players.Count > 0 ? Players[CurrentPlayerIndex] : null;
+        Players.Count > 0 && CurrentPlayerIndex >= 0 && CurrentPlayerIndex < Players.Count
+            ? Players[CurrentPlayerIndex]
+            : null;
 
     public GameRoom(string code, string hostId)
     {

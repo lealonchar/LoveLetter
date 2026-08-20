@@ -1,8 +1,30 @@
 <template>
   <div class="game-table">
-    <button type="button" class="leave-game-btn" @click="openLeaveConfirm">
-      Leave game
-    </button>
+    <div class="game-toolbar">
+      <div class="toolbar-group">
+        <aside :class="['log-panel', logOpen ? 'log-panel--open' : '']" aria-label="Game log">
+          <button type="button" class="log-toggle" @click="toggleLog">
+            <span>{{ logOpen ? 'Close log' : 'Game log' }}</span>
+            <span class="log-count">{{ gameLog.length }}</span>
+          </button>
+          <div v-if="logOpen" class="log-entries">
+            <p v-if="gameLog.length === 0" class="log-entry log-entry--empty">
+              No log entries yet.
+            </p>
+            <p
+                v-for="(entry, i) in gameLog"
+                :key="i"
+                class="log-entry">
+              {{ entry }}
+            </p>
+          </div>
+        </aside>
+      </div>
+
+      <button type="button" class="leave-game-btn" @click="openLeaveConfirm">
+        Leave game
+      </button>
+    </div>
 
     <div class="opponents-bar">
       <OpponentSeat
@@ -10,6 +32,7 @@
           :key="p.id"
           :player="p"
           :is-current="isCurrentPlayer(p)"
+          @zoom-card="openCardZoom"
       />
     </div>
 
@@ -51,44 +74,6 @@
       </Transition>
     </main>
 
-    <aside :class="['log-panel', logOpen ? 'log-panel--open' : '']" aria-label="Game log">
-      <button type="button" class="log-toggle" @click="logOpen = !logOpen">
-        <span>{{ logOpen ? 'Close log' : 'Game log' }}</span>
-        <span class="log-count">{{ gameLog.length }}</span>
-      </button>
-      <div v-if="logOpen" class="log-entries">
-        <p v-if="gameLog.length === 0" class="log-entry log-entry--empty">
-          No log entries yet.
-        </p>
-        <p
-            v-for="(entry, i) in gameLog"
-            :key="i"
-            class="log-entry">
-          {{ entry }}
-        </p>
-      </div>
-    </aside>
-
-    <aside :class="['reference-panel', cardReferenceOpen ? 'reference-panel--open' : '']" aria-label="Card reference">
-      <button type="button" class="reference-toggle" @click="cardReferenceOpen = !cardReferenceOpen">
-        <span>{{ cardReferenceOpen ? 'Close cards' : 'Cards' }}</span>
-        <span class="reference-count">{{ totalCardCount }}</span>
-      </button>
-      <div v-if="cardReferenceOpen" class="reference-entries">
-        <div
-            v-for="card in cardReference"
-            :key="card.type"
-            class="reference-card">
-          <div class="reference-card-head">
-            <span class="reference-value">{{ card.value }}</span>
-            <span class="reference-name">{{ card.name }}</span>
-            <span class="reference-copy">x{{ card.count }}</span>
-          </div>
-          <p class="reference-description">{{ card.description }}</p>
-        </div>
-      </div>
-    </aside>
-
     <section :class="['my-area', selectedCard && isMyTurn ? 'my-area--acting' : '']">
       <div class="my-info-bar">
         <div class="my-tokens">
@@ -103,14 +88,16 @@
       </div>
 
       <div v-if="myPlayer?.discards?.length" class="my-discards">
-        <div
+        <button
             v-for="(card, i) in myPlayer.discards"
             :key="i"
+            type="button"
             class="discard-card"
             :style="discardStyle(i, myPlayer.discards.length)"
-            :title="card.name">
+            :title="`${card.name} - double tap to zoom`"
+            @click="handleVisibleCardTap(`my-discard-${i}`, card)">
           <CardFace :card="card" size="sm" />
-        </div>
+        </button>
       </div>
 
       <div v-if="!isMyTurn && !isMyChancellorPending && myPlayer && !myPlayer.isEliminated" class="waiting-msg">
@@ -122,23 +109,27 @@
       </div>
 
       <div v-if="myPlayer?.hand && !isMyChancellorPending && !myPlayer.isEliminated" class="my-hand">
-        <button
-            type="button"
-            :disabled="!isMyTurn"
-            :class="['hand-card', !isMyTurn ? 'hand-card--disabled' : '', selectedCard === myPlayer.hand.type ? 'hand-card--selected' : '']"
-            @click="selectCard(myPlayer.hand.type)">
-          <CardFace :card="myPlayer.hand" size="lg" />
-          <span class="card-label">In hand</span>
-        </button>
+        <div class="hand-card-wrap">
+          <button
+              type="button"
+              :title="`${myPlayer.hand.name} - double tap to zoom`"
+              :class="['hand-card', !isMyTurn ? 'hand-card--disabled' : '', selectedCardSlot === 'hand' ? 'hand-card--selected' : '']"
+              @click="handleHandCardClick('hand', myPlayer.hand)">
+            <CardFace :card="myPlayer.hand" size="lg" />
+            <span class="card-label">In hand</span>
+          </button>
+        </div>
 
-        <button
-            v-if="state.gameState.drawnCard"
-            type="button"
-            :class="['hand-card hand-card--drawn', selectedCard === state.gameState.drawnCard.type ? 'hand-card--selected' : '']"
-            @click="selectCard(state.gameState.drawnCard.type)">
-          <CardFace :card="state.gameState.drawnCard" size="lg" />
-          <span class="card-label card-label--new">Just drawn</span>
-        </button>
+        <div v-if="state.gameState.drawnCard" class="hand-card-wrap">
+          <button
+              type="button"
+              :title="`${state.gameState.drawnCard.name} - double tap to zoom`"
+              :class="['hand-card hand-card--drawn', selectedCardSlot === 'drawn' ? 'hand-card--selected' : '']"
+              @click="handleHandCardClick('drawn', state.gameState.drawnCard)">
+            <CardFace :card="state.gameState.drawnCard" size="lg" />
+            <span class="card-label card-label--new">Just drawn</span>
+          </button>
+        </div>
       </div>
 
       <Transition name="slide-up">
@@ -179,24 +170,69 @@
       </Transition>
     </section>
 
+    <aside :class="['reference-panel', cardReferenceOpen ? 'reference-panel--open' : '']" aria-label="Card reference">
+      <button type="button" class="reference-toggle" @click="toggleCardReference">
+        <span>{{ cardReferenceOpen ? 'Close cards' : 'Cards' }}</span>
+        <span class="reference-count">{{ totalCardCount }}</span>
+      </button>
+      <div v-if="cardReferenceOpen" class="reference-entries">
+          <button
+            v-for="card in cardReference"
+            :key="card.type"
+            type="button"
+            class="reference-card"
+            :title="`${card.name} - double tap to zoom`"
+            @click="handleVisibleCardTap(`reference-${card.type}`, card)">
+          <div class="reference-card-head">
+            <span class="reference-value">{{ card.value }}</span>
+            <span class="reference-name">{{ card.name }}</span>
+            <span class="reference-copy">x{{ card.count }}</span>
+          </div>
+          <p class="reference-description">{{ card.description }}</p>
+        </button>
+      </div>
+    </aside>
+
     <Transition name="slide-up">
       <div v-if="isMyChancellorPending" class="chancellor-overlay">
         <p class="chancellor-title">Choose a card to keep</p>
-        <p class="chancellor-sub">The other {{ state.gameState.chancellorOptions.length - 1 }} return to the bottom of the deck</p>
+        <p class="chancellor-sub">The other {{ chancellorOptions.length - 1 }} return to the bottom of the deck</p>
         <div class="chancellor-cards">
           <button
-              v-for="(card, index) in state.gameState.chancellorOptions"
+              v-for="(card, index) in chancellorOptions"
               :key="`${card.type}-${index}`"
               type="button"
-              :class="['chancellor-card-option', selectedChancellorCard === card.type ? 'selected' : '']"
-              @click="selectedChancellorCard = card.type">
+              :class="['chancellor-card-option', selectedChancellorIndex === index ? 'selected' : '']"
+              :title="`${card.name} - double tap to zoom`"
+              @click="handleChancellorCardClick(index, card)">
             <CardFace :card="card" size="lg" />
+          </button>
+        </div>
+        <div v-if="selectedChancellorIndex !== null" class="chancellor-return-order">
+          <p class="chancellor-order-title">Return order</p>
+          <div class="chancellor-return-cards">
+            <div
+                v-for="(option, position) in chancellorReturnCards"
+                :key="`${option.card.type}-${option.index}`"
+                class="chancellor-return-card">
+              <CardFace :card="option.card" size="sm" />
+              <span class="return-position">
+                {{ position === 0 ? 'Return first' : 'Return second' }}
+              </span>
+            </div>
+          </div>
+          <button
+              v-if="chancellorReturnCards.length > 1"
+              type="button"
+              class="swap-order-btn"
+              @click="swapChancellorReturnOrder">
+            Swap order
           </button>
         </div>
         <button
             type="button"
             @click="confirmChancellor"
-            :disabled="!selectedChancellorCard"
+            :disabled="selectedChancellorIndex === null"
             class="confirm-btn">
           Keep this card
         </button>
@@ -221,6 +257,22 @@
         </div>
       </div>
     </Transition>
+
+    <Transition name="pop">
+      <div
+          v-if="zoomedCard"
+          class="card-zoom-backdrop"
+          role="dialog"
+          aria-modal="true"
+          @click.self="closeCardZoom">
+        <div class="card-zoom-modal">
+          <button type="button" class="zoom-close-btn" @click="closeCardZoom">
+            Close
+          </button>
+          <CardFace :card="zoomedCard" size="xl" />
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -234,16 +286,21 @@ import { cardReference, totalCardCount } from '../data/cardReference'
 const { state, myPlayer, isMyTurn, playCard, resolveChancellor, leaveGame } = useGameStore()
 
 const selectedCard = ref(null)
+const selectedCardSlot = ref(null)
 const selectedTarget = ref(null)
 const selectedGuess = ref(null)
-const selectedChancellorCard = ref(null)
+const selectedChancellorIndex = ref(null)
+const chancellorReturnOrder = ref([])
 const logOpen = ref(false)
 const cardReferenceOpen = ref(false)
 const leaveConfirmOpen = ref(false)
+const zoomedCard = ref(null)
 const tableEvent = ref(null)
 const tableEventKey = ref(0)
 let tableEventTimer = null
 let lastSeenLogEntry = null
+let lastTappedCardKey = null
+let lastCardTapAt = 0
 
 const guardGuesses = ['Priest', 'Baron', 'Handmaid', 'Prince', 'Chancellor', 'King', 'Countess', 'Princess']
 const targetedCards = ['Guard', 'Priest', 'Baron', 'King']
@@ -264,6 +321,16 @@ const opponents = computed(() =>
 
 const gameLog = computed(() =>
     state.gameState?.log ?? state.gameState?.Log ?? []
+)
+
+const chancellorOptions = computed(() =>
+    state.gameState?.chancellorOptions ?? []
+)
+
+const chancellorReturnCards = computed(() =>
+    chancellorReturnOrder.value
+        .map(index => ({ index, card: chancellorOptions.value[index] }))
+        .filter(option => option.card)
 )
 
 watch(
@@ -287,6 +354,29 @@ watch(
     }
 )
 
+watch(
+    chancellorOptions,
+    () => {
+      selectedChancellorIndex.value = null
+      chancellorReturnOrder.value = []
+    }
+)
+
+watch(
+    () => [
+      state.gameState?.currentPlayerId_Index,
+      myPlayer.value?.hand?.type,
+      state.gameState?.drawnCard?.type,
+      state.gameState?.phase,
+    ].join(':'),
+    () => {
+      selectedCard.value = null
+      selectedCardSlot.value = null
+      selectedTarget.value = null
+      selectedGuess.value = null
+    }
+)
+
 const validTargets = computed(() => {
   if (!selectedCard.value) return []
   const base = state.gameState.players.filter(p =>
@@ -299,10 +389,54 @@ const validTargets = computed(() => {
   return base
 })
 
-function selectCard(type) {
+function selectCard(slot, type) {
+  selectedCardSlot.value = slot
   selectedCard.value = type
   selectedTarget.value = null
   selectedGuess.value = null
+}
+
+function handleHandCardClick(slot, card) {
+  if (handleCardDoubleTap(`hand-${slot}`, card))
+    return
+
+  if (isMyTurn.value)
+    selectCard(slot, card.type)
+}
+
+function handleVisibleCardTap(key, card) {
+  handleCardDoubleTap(key, card)
+}
+
+function handleChancellorCardClick(index, card) {
+  if (handleCardDoubleTap(`chancellor-${index}`, card))
+    return
+
+  selectedChancellorIndex.value = index
+  chancellorReturnOrder.value = chancellorOptions.value
+      .map((_, optionIndex) => optionIndex)
+      .filter(optionIndex => optionIndex !== index)
+}
+
+function handleCardDoubleTap(key, card) {
+  const now = Date.now()
+  const isDoubleTap = lastTappedCardKey === key && now - lastCardTapAt <= 360
+
+  lastTappedCardKey = key
+  lastCardTapAt = now
+
+  if (!isDoubleTap)
+    return false
+
+  lastTappedCardKey = null
+  lastCardTapAt = 0
+  openCardZoom(card)
+  return true
+}
+
+function swapChancellorReturnOrder() {
+  if (chancellorReturnOrder.value.length < 2) return
+  chancellorReturnOrder.value = [...chancellorReturnOrder.value].reverse()
 }
 
 function isCurrentPlayer(p) {
@@ -311,6 +445,18 @@ function isCurrentPlayer(p) {
 
 function getPlayerName(id) {
   return state.gameState?.players.find(p => p.id === id)?.name ?? 'Unknown'
+}
+
+function toggleLog() {
+  logOpen.value = !logOpen.value
+  if (logOpen.value)
+    cardReferenceOpen.value = false
+}
+
+function toggleCardReference() {
+  cardReferenceOpen.value = !cardReferenceOpen.value
+  if (cardReferenceOpen.value)
+    logOpen.value = false
 }
 
 function discardStyle(index, total) {
@@ -334,18 +480,29 @@ async function confirmPlay() {
   if (!canConfirm.value) return
   await playCard(selectedCard.value, selectedTarget.value ?? null, selectedGuess.value ?? null)
   selectedCard.value = null
+  selectedCardSlot.value = null
   selectedTarget.value = null
   selectedGuess.value = null
 }
 
 async function confirmChancellor() {
-  if (!selectedChancellorCard.value) return
-  await resolveChancellor(selectedChancellorCard.value)
-  selectedChancellorCard.value = null
+  if (selectedChancellorIndex.value === null) return
+  await resolveChancellor(selectedChancellorIndex.value, chancellorReturnOrder.value)
+  selectedChancellorIndex.value = null
+  chancellorReturnOrder.value = []
 }
 
 function openLeaveConfirm() {
   leaveConfirmOpen.value = true
+}
+
+function openCardZoom(card) {
+  if (!card) return
+  zoomedCard.value = card
+}
+
+function closeCardZoom() {
+  zoomedCard.value = null
 }
 
 async function confirmLeave() {
@@ -362,12 +519,13 @@ async function confirmLeave() {
   color: #fee2e2;
   display: grid;
   grid-template-areas:
+    "toolbar"
     "opponents"
     "center"
     "player";
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(120px, 0.8fr) auto;
-  gap: 10px;
+  grid-template-rows: auto auto minmax(120px, 0.8fr) auto;
+  gap: 8px;
   padding: 10px 14px;
   overflow-x: hidden;
   overflow-y: hidden;
@@ -386,6 +544,7 @@ async function confirmLeave() {
 .opponents-bar,
 .table-center,
 .my-area,
+.game-toolbar,
 .log-panel,
 .reference-panel,
 .leave-game-btn {
@@ -393,12 +552,30 @@ async function confirmLeave() {
   z-index: 1;
 }
 
+.game-toolbar {
+  grid-area: toolbar;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  min-height: 38px;
+  z-index: 30;
+}
+
+.toolbar-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
 .opponents-bar {
   grid-area: opponents;
   display: flex;
   gap: 10px;
   overflow-x: auto;
-  padding: 0 150px 4px;
+  padding: 0 0 4px;
   justify-content: center;
   min-width: 0;
   scrollbar-width: thin;
@@ -513,10 +690,11 @@ async function confirmLeave() {
   grid-template-areas:
     "info"
     "hand"
+    "discards"
     "status";
   align-items: center;
   justify-content: center;
-  gap: 8px 18px;
+  gap: 6px 18px;
   padding: 10px 14px;
   border: 1px solid rgba(255,255,255,0.08);
   background: rgba(0,0,0,0.24);
@@ -576,22 +754,35 @@ async function confirmLeave() {
 }
 
 .my-discards {
-  position: absolute;
-  left: clamp(24px, 28%, 520px);
-  bottom: 70px;
-  height: 96px;
-  width: 150px;
+  grid-area: discards;
+  position: relative;
+  left: auto;
+  bottom: auto;
+  height: 76px;
+  width: min(100%, 170px);
   display: flex;
   justify-content: center;
-  pointer-events: none;
+  justify-self: center;
+  margin-top: -4px;
+  pointer-events: auto;
 }
 
 .discard-card {
   position: absolute;
   top: 0;
   left: 50%;
-  margin-left: -32px;
+  margin-left: -25px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  cursor: zoom-in;
   transition: transform 0.3s ease;
+}
+
+.my-discards :deep(.card-face--sm) {
+  width: 50px;
+  height: 70px;
 }
 
 .my-hand {
@@ -605,6 +796,12 @@ async function confirmLeave() {
   transition: transform 0.22s ease;
 }
 
+.hand-card-wrap {
+  position: relative;
+  display: grid;
+  justify-items: center;
+}
+
 .my-area--acting .my-hand {
   justify-content: flex-start;
 }
@@ -615,6 +812,8 @@ async function confirmLeave() {
   left: auto;
   bottom: auto;
   width: min(100%, 220px);
+  height: 86px;
+  margin-top: 0;
   pointer-events: auto;
 }
 
@@ -642,7 +841,7 @@ async function confirmLeave() {
 }
 
 .hand-card--disabled {
-  cursor: default;
+  cursor: zoom-in;
   opacity: 0.82;
 }
 
@@ -761,10 +960,8 @@ async function confirmLeave() {
 }
 
 .leave-game-btn {
-  position: absolute;
-  top: 14px;
-  right: 14px;
-  z-index: 20;
+  position: relative;
+  flex: 0 0 auto;
   min-width: 116px;
   border: 1px solid rgba(255,255,255,0.08);
   background: rgba(0,0,0,0.28);
@@ -784,21 +981,19 @@ async function confirmLeave() {
 }
 
 .log-panel {
-  position: absolute;
-  top: 14px;
-  left: 14px;
-  z-index: 20;
+  position: relative;
+  flex: 0 0 auto;
   width: 132px;
   border: 1px solid rgba(255,255,255,0.08);
   background: rgba(0,0,0,0.28);
   border-radius: 8px;
-  overflow: hidden;
+  overflow: visible;
   box-shadow: 0 10px 28px rgba(0,0,0,0.28);
   transition: width 0.2s ease, background 0.2s ease;
 }
 
 .log-panel--open {
-  width: min(340px, calc(100% - 28px));
+  width: 132px;
   background: rgba(10, 2, 2, 0.94);
 }
 
@@ -832,12 +1027,20 @@ async function confirmLeave() {
 }
 
 .log-entries {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  width: min(340px, calc(100vw - 28px));
   max-height: min(320px, calc(100dvh - 110px));
   overflow-y: auto;
   padding: 10px 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(10, 2, 2, 0.96);
+  border-radius: 8px;
+  box-shadow: 0 14px 34px rgba(0,0,0,0.34);
 }
 
 .log-entry {
@@ -854,20 +1057,20 @@ async function confirmLeave() {
 
 .reference-panel {
   position: absolute;
-  bottom: 14px;
   left: 14px;
-  z-index: 20;
+  bottom: 14px;
+  z-index: 30;
   width: 132px;
   border: 1px solid rgba(255,255,255,0.08);
   background: rgba(0,0,0,0.28);
   border-radius: 8px;
-  overflow: hidden;
+  overflow: visible;
   box-shadow: 0 10px 28px rgba(0,0,0,0.28);
   transition: width 0.2s ease, background 0.2s ease;
 }
 
 .reference-panel--open {
-  width: min(430px, calc(100% - 28px));
+  width: 132px;
   background: rgba(10, 2, 2, 0.95);
 }
 
@@ -901,18 +1104,34 @@ async function confirmLeave() {
 }
 
 .reference-entries {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  width: min(430px, calc(100vw - 28px));
   max-height: min(440px, calc(100dvh - 150px));
   overflow-y: auto;
   padding: 10px;
   display: grid;
   gap: 8px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(10, 2, 2, 0.96);
+  border-radius: 8px;
+  box-shadow: 0 14px 34px rgba(0,0,0,0.34);
 }
 
 .reference-card {
+  width: 100%;
+  text-align: left;
   border: 1px solid rgba(255,255,255,0.08);
   background: rgba(255,255,255,0.035);
   border-radius: 8px;
   padding: 9px 10px;
+  cursor: zoom-in;
+}
+
+.reference-card:hover {
+  border-color: rgba(251, 113, 133, 0.28);
+  background: rgba(255,255,255,0.06);
 }
 
 .reference-card-head {
@@ -982,6 +1201,42 @@ async function confirmLeave() {
   padding: 18px;
   background: rgba(10, 2, 2, 0.72);
   backdrop-filter: blur(6px);
+}
+
+.card-zoom-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(10, 2, 2, 0.78);
+  backdrop-filter: blur(7px);
+}
+
+.card-zoom-modal {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  max-width: min(100%, 360px);
+}
+
+.zoom-close-btn {
+  justify-self: end;
+  border: 1px solid rgba(251, 113, 133, 0.28);
+  background: rgba(20, 5, 8, 0.9);
+  color: #fecdd3;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.zoom-close-btn:hover {
+  background: rgba(159, 18, 57, 0.42);
 }
 
 .leave-modal {
@@ -1066,6 +1321,63 @@ async function confirmLeave() {
   justify-content: center;
 }
 
+.chancellor-return-order {
+  width: min(100%, 420px);
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.04);
+  border-radius: 8px;
+}
+
+.chancellor-order-title {
+  margin: 0;
+  color: #ffe4e6;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.chancellor-return-cards {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: center;
+  gap: 14px;
+}
+
+.chancellor-return-card {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+}
+
+.return-position {
+  color: #fecdd3;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.swap-order-btn {
+  justify-self: center;
+  min-width: 116px;
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 1px solid rgba(251, 113, 133, 0.32);
+  background: rgba(159, 18, 57, 0.26);
+  color: #ffe4e6;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.swap-order-btn:hover {
+  background: rgba(190, 18, 60, 0.62);
+}
+
 .fade-enter-active,
 .fade-leave-active,
 .slide-up-enter-active,
@@ -1123,7 +1435,7 @@ async function confirmLeave() {
 
 @media (min-width: 760px) and (max-height: 820px) {
   .game-table {
-    grid-template-rows: auto minmax(118px, 0.7fr) auto;
+    grid-template-rows: auto auto minmax(118px, 0.7fr) auto;
     gap: 8px;
     padding: 10px;
   }
@@ -1225,12 +1537,21 @@ async function confirmLeave() {
     height: auto;
     min-height: calc(100dvh - 2rem);
     grid-template-areas:
+      "toolbar"
       "opponents"
       "center"
       "player";
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto auto;
+    grid-template-rows: auto auto auto auto;
     overflow-y: auto;
+  }
+
+  .game-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .toolbar-group {
+    flex-wrap: wrap;
   }
 
   .table-center {
@@ -1242,39 +1563,40 @@ async function confirmLeave() {
     flex-direction: column;
   }
 
+  .my-info-bar {
+    order: 1;
+  }
+
+  .my-hand {
+    order: 2;
+  }
+
   .my-discards {
+    order: 3;
     position: relative;
     left: auto;
     bottom: auto;
     pointer-events: auto;
   }
 
-  .log-panel {
-    top: 10px;
-    left: 10px;
+  .waiting-msg,
+  .eliminated-msg {
+    order: 4;
+  }
+
+  .log-entries {
+    width: min(360px, calc(100vw - 20px));
+    max-height: 220px;
   }
 
   .reference-panel {
-    bottom: 10px;
     left: 10px;
+    bottom: 10px;
   }
 
-  .leave-game-btn {
-    top: 10px;
-    right: 10px;
-  }
-
-  .log-panel--open {
-    width: min(320px, calc(100% - 20px));
-  }
-
-  .reference-panel--open {
-    width: min(360px, calc(100% - 20px));
-  }
-
-  .log-entries,
   .reference-entries {
-    max-height: 220px;
+    width: min(360px, calc(100vw - 20px));
+    max-height: min(320px, calc(100dvh - 90px));
   }
 }
 
@@ -1284,10 +1606,44 @@ async function confirmLeave() {
     gap: 10px;
   }
 
+  .toolbar-group {
+    gap: 6px;
+  }
+
+  .log-panel {
+    width: 124px;
+  }
+
+  .reference-panel {
+    width: 124px;
+  }
+
+  .leave-game-btn {
+    min-width: 104px;
+  }
+
+  .log-entries {
+    position: fixed;
+    top: 58px;
+    left: 10px;
+    width: calc(100vw - 20px);
+    max-height: min(420px, calc(100dvh - 90px));
+    z-index: 40;
+  }
+
+  .reference-entries {
+    position: fixed;
+    left: 10px;
+    bottom: 58px;
+    width: calc(100vw - 20px);
+    max-height: min(420px, calc(100dvh - 90px));
+    z-index: 40;
+  }
+
   .opponents-bar {
     justify-content: flex-start;
-    padding-left: 118px;
-    padding-right: 118px;
+    padding-left: 0;
+    padding-right: 0;
   }
 
   .pile-area {

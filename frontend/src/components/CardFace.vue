@@ -24,8 +24,8 @@
     <!-- Card name -->
     <div class="card-name">{{ card.name }}</div>
 
-    <!-- Description (only on lg) -->
-    <div v-if="size === 'lg'" class="card-desc">{{ card.description }}</div>
+    <!-- Description (only on readable sizes) -->
+    <div v-if="size === 'lg' || size === 'xl'" class="card-desc">{{ card.description }}</div>
 
     <!-- Corner value bottom-right (rotated) -->
     <div class="card-corner card-corner--br">
@@ -40,7 +40,7 @@ import { ref, computed } from 'vue'
 
 const props = defineProps({
   card: { type: Object, required: true },
-  size: { type: String, default: 'md' }, // sm | md | lg
+  size: { type: String, default: 'md' }, // sm | md | lg | xl
 })
 
 const imgError = ref(false)
@@ -90,6 +90,7 @@ const imageSrc = computed(() => {
 .card-face--sm  { width: 64px;  height: 90px; }
 .card-face--md  { width: 96px;  height: 134px; }
 .card-face--lg  { width: 150px; height: 210px; }
+.card-face--xl  { width: min(78vw, 280px); height: min(116vw, 392px); }
 
 /* Colored top stripe per card */
 .card-face::before {
@@ -135,6 +136,7 @@ const imageSrc = computed(() => {
 
 .card-face--sm .card-value { font-size: 13px; }
 .card-face--lg .card-value { font-size: 20px; }
+.card-face--xl .card-value { font-size: 30px; }
 
 .card-abbr {
   font-size: 9px;
@@ -179,6 +181,7 @@ const imageSrc = computed(() => {
 
 .card-face--sm .card-art-icon  { font-size: 22px; }
 .card-face--lg .card-art-icon  { font-size: 48px; }
+.card-face--xl .card-art-icon  { font-size: 82px; }
 
 /* Name */
 .card-name {
@@ -195,6 +198,7 @@ const imageSrc = computed(() => {
 
 .card-face--sm .card-name { font-size: 8px; padding: 2px 3px 3px; }
 .card-face--lg .card-name { font-size: 12px; padding: 4px 8px; }
+.card-face--xl .card-name { font-size: 19px; padding: 7px 12px; }
 
 /* Description */
 .card-desc {
@@ -204,5 +208,11 @@ const imageSrc = computed(() => {
   text-align: center;
   padding: 0 8px 8px;
   flex-shrink: 0;
+}
+
+.card-face--xl .card-desc {
+  font-size: 15px;
+  line-height: 1.35;
+  padding: 0 18px 18px;
 }
 </style>

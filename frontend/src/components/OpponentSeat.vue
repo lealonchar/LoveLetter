@@ -1,18 +1,22 @@
 <template>
   <div :class="['opponent-seat', isCurrent ? 'opponent-seat--active' : '', player.isEliminated ? 'opponent-seat--eliminated' : '']">
-    <div class="opp-discards" v-if="player.discards?.length">
-      <div
-          v-for="(card, i) in player.discards.slice(-5)"
-          :key="i"
-          class="opp-discard"
-          :style="discardStyle(i, Math.min(player.discards.length, 5))"
-          :title="card.name">
-        <CardFace :card="card" size="sm" />
+    <div :class="['opp-card-zone', !player.discards?.length ? 'opp-card-zone--hand-only' : '', player.isEliminated ? 'opp-card-zone--discard-only' : '']">
+      <div class="opp-discards" v-if="player.discards?.length">
+        <button
+            v-for="(card, i) in visibleDiscards"
+            :key="i"
+            type="button"
+            class="opp-discard"
+            :style="discardStyle(i, visibleDiscards.length)"
+            :title="`${card.name} - double tap to zoom`"
+            @click="handleDiscardTap(i, card)">
+          <CardFace :card="card" size="sm" />
+        </button>
       </div>
-    </div>
 
-    <div class="opp-hand" v-if="!player.isEliminated">
-      <div class="card-back-small" />
+      <div class="opp-hand" v-if="!player.isEliminated">
+        <div class="card-back-small" />
+      </div>
     </div>
 
     <div class="opp-info">
@@ -48,11 +52,32 @@ const props = defineProps({
   isCurrent: { type: Boolean, default: false },
 })
 
+const emit = defineEmits(['zoom-card'])
+
 const { state } = useGameStore()
 const maxTokens = computed(() => state.gameState?.roundsToWin ?? 7)
+const visibleDiscards = computed(() => props.player.discards?.slice(-4) ?? [])
+let lastTappedDiscardKey = null
+let lastDiscardTapAt = 0
+
+function handleDiscardTap(index, card) {
+  const key = `${props.player.id}-${index}`
+  const now = Date.now()
+  const isDoubleTap = lastTappedDiscardKey === key && now - lastDiscardTapAt <= 360
+
+  lastTappedDiscardKey = key
+  lastDiscardTapAt = now
+
+  if (!isDoubleTap)
+    return
+
+  lastTappedDiscardKey = null
+  lastDiscardTapAt = 0
+  emit('zoom-card', card)
+}
 
 function discardStyle(index, total) {
-  const spread = Math.min(total * 16, 64)
+  const spread = Math.min(total * 10, 34)
   const start = -spread / 2
   const step = total > 1 ? spread / (total - 1) : 0
   return {
@@ -69,7 +94,7 @@ function discardStyle(index, total) {
   align-content: start;
   gap: 8px;
   width: 132px;
-  min-height: 116px;
+  min-height: 138px;
   padding: 10px;
   border-radius: 8px;
   border: 1px solid rgba(255,255,255,0.08);
@@ -89,17 +114,45 @@ function discardStyle(index, total) {
   filter: grayscale(0.6);
 }
 
-.opp-discards {
+.opp-card-zone {
   position: relative;
-  height: 92px;
-  width: 110px;
+  height: 86px;
+  width: 112px;
+}
+
+.opp-card-zone--hand-only .opp-hand {
+  left: 50%;
+  top: 14px;
+  transform: translateX(-50%);
+}
+
+.opp-discards {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 76px;
+  height: 78px;
+  transform: translateX(-50%);
 }
 
 .opp-discard {
   position: absolute;
-  top: 0;
+  top: 2px;
   left: 50%;
   margin-left: -32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  cursor: zoom-in;
+}
+
+.opp-hand {
+  position: absolute;
+  left: calc(50% + 18px);
+  top: 16px;
+  z-index: 8;
+  transform: rotate(3deg);
 }
 
 .card-back-small {
@@ -202,23 +255,44 @@ function discardStyle(index, total) {
 @media (min-width: 901px) {
   .opponent-seat {
     width: 116px;
-    min-height: 88px;
+    min-height: 124px;
     gap: 5px;
     padding: 7px;
   }
 
+  .opp-card-zone {
+    height: 72px;
+    width: 96px;
+  }
+
+  .opp-card-zone--hand-only .opp-hand {
+    left: 50%;
+    top: 10px;
+    transform: translateX(-50%);
+  }
+
   .opp-discards {
+    width: 68px;
     height: 68px;
-    width: 92px;
   }
 
   .opp-discard {
     margin-left: -24px;
   }
 
+  :deep(.card-face--sm) {
+    width: 48px;
+    height: 68px;
+  }
+
   .card-back-small {
     width: 34px;
     height: 48px;
+  }
+
+  .opp-hand {
+    left: calc(50% + 16px);
+    top: 14px;
   }
 
   .opp-name {

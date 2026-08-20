@@ -11,6 +11,9 @@ public class GameEngine
     // Round setup
     public void StartRound(GameRoom room)
     {
+        var previousRoundWinnerIds = room.RoundWinnerIds
+            .Where(id => room.Players.Any(p => p.Id == id))
+            .ToList();
         var deck = Deck.Shuffle(Deck.CreateDeck());
 
         // Reset player state
@@ -33,11 +36,13 @@ public class GameEngine
             p.Hand = DrawCard(room);
 
         room.Phase = GamePhase.Playing;
-        room.CurrentPlayerIndex = 0;
+        room.CurrentPlayerIndex = ChooseRoundStarter(room, previousRoundWinnerIds);
         room.DrawnCard = null;
         room.PendingAction = null;
         room.ChancellorOptions.Clear();
         room.ChancellorPlayerId = null;
+        room.RoundWinnerIds.Clear();
+        room.GameWinnerIds.Clear();
         room.Log.Clear();
         room.Log.Add("New round started.");
     }
@@ -293,6 +298,8 @@ public class GameEngine
     {
         if (room.PendingAction == ChancellorPendingAction)
             return;
+        if (room.Phase is GamePhase.RoundOver or GamePhase.GameOver)
+            return;
 
         var alive = room.Players.Where(p => !p.IsEliminated).ToList();
 
@@ -303,7 +310,7 @@ public class GameEngine
 
         room.Phase = GamePhase.RoundOver;
 
-        Player roundWinner;
+        List<Player> roundWinners;
         if (alive.Count == 0)
         {
             room.Log.Add("The round ended with no players still standing.");
@@ -311,8 +318,8 @@ public class GameEngine
         }
         if (oneLeft)
         {
-            roundWinner = alive[0];
-            room.Log.Add($"{roundWinner.Name} is the last player standing!");
+            roundWinners = [alive[0]];
+            room.Log.Add($"{roundWinners[0].Name} is the last player standing!");
         }
         else
         {
@@ -323,14 +330,21 @@ public class GameEngine
                 return;
             }
 
-            roundWinner = contenders
-                .OrderByDescending(p => p.Hand!.Value)
-                .ThenByDescending(p => p.Discards.Sum(c => c.Value))
-                .First();
-            room.Log.Add($"Deck exhausted! {roundWinner.Name} wins with the highest card ({roundWinner.Hand!.Name}).");
+            var highestValue = contenders.Max(p => p.Hand!.Value);
+            roundWinners = contenders
+                .Where(p => p.Hand!.Value == highestValue)
+                .ToList();
+
+            var cardName = roundWinners[0].Hand!.Name;
+            var winnerNames = FormatNames(roundWinners.Select(p => p.Name));
+            var tieText = roundWinners.Count > 1 ? " tie with" : " wins with";
+            var tokenText = roundWinners.Count > 1 ? " and each win the round" : "";
+            room.Log.Add($"Deck exhausted! {winnerNames}{tieText} the highest card ({cardName}){tokenText}.");
         }
 
         // Spy bonus — must be before winner token so game over check is accurate
+        room.RoundWinnerIds = roundWinners.Select(p => p.Id).ToList();
+
         var aliveSpy = room.Players
             .Where(p => !p.IsEliminated && p.Discards.Any(d => d.Type == CardType.Spy))
             .ToList();
@@ -341,15 +355,51 @@ public class GameEngine
             room.Log.Add($"{aliveSpy[0].Name} is the only surviving Spy player and gains a bonus token!");
         }
 
-        roundWinner.Tokens++;
-        room.Log.Add($"{roundWinner.Name} gains an affection token ({roundWinner.Tokens}/{room.RoundsToWin}).");
-
-        // Check game over for both the round winner and a potential Spy bonus winner
-        var gameWinner = room.Players.FirstOrDefault(p => p.Tokens >= room.RoundsToWin);
-        if (gameWinner != null)
+        foreach (var winner in roundWinners)
         {
-            room.Phase = GamePhase.GameOver;
-            room.Log.Add($"{gameWinner.Name} wins the game!");
+            winner.Tokens++;
+            room.Log.Add($"{winner.Name} gains an affection token ({winner.Tokens}/{room.RoundsToWin}).");
         }
+
+        // Check game over for round winners and a potential Spy bonus winner.
+        var gameWinners = room.Players
+            .Where(p => p.Tokens >= room.RoundsToWin)
+            .ToList();
+
+        if (gameWinners.Count > 0)
+        {
+            room.GameWinnerIds = gameWinners.Select(p => p.Id).ToList();
+            room.Phase = GamePhase.GameOver;
+            var gameWinnerNames = FormatNames(gameWinners.Select(p => p.Name));
+            room.Log.Add($"{gameWinnerNames} {(gameWinners.Count == 1 ? "wins" : "win")} the game!");
+        }
+    }
+
+    private static int ChooseRoundStarter(GameRoom room, List<string> previousRoundWinnerIds)
+    {
+        if (room.Players.Count == 0)
+            return 0;
+
+        var starterIndexes = previousRoundWinnerIds
+            .Select(id => room.Players.FindIndex(p => p.Id == id))
+            .Where(index => index >= 0)
+            .ToList();
+
+        if (starterIndexes.Count == 0)
+            return 0;
+
+        return starterIndexes[Random.Shared.Next(starterIndexes.Count)];
+    }
+
+    private static string FormatNames(IEnumerable<string> names)
+    {
+        var list = names.ToList();
+        return list.Count switch
+        {
+            0 => "Nobody",
+            1 => list[0],
+            2 => $"{list[0]} and {list[1]}",
+            _ => $"{string.Join(", ", list.Take(list.Count - 1))}, and {list[^1]}"
+        };
     }
 }
