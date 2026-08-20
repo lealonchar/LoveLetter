@@ -1,5 +1,7 @@
 ﻿using LoveLetter.Domain.Models;
 
+using System.Collections.Generic;
+
 namespace LoveLetter.Domain.Dto;
 
 public record PlayerDto(

@@ -1,7 +1,11 @@
+using System;
 using LoveLetter.Domain.Dto;
 using LoveLetter.Domain.Enums;
 using LoveLetter.Domain.Models;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 
 namespace LoveLetter.Hubs;
 
@@ -322,7 +326,9 @@ public class GameHub : Hub
             {
                 var target = room.Players.FirstOrDefault(p => p.Id == targetId);
                 if (target is { Hand: not null, IsEliminated: false, IsProtected: false })
-                    await Clients.Caller.SendAsync("PriestReveal", targetId, target.Hand.Type.ToString());
+                    await Clients.Caller.SendCoreAsync(
+                        "PriestReveal",
+                        new object?[] { targetId, target.Hand.Type.ToString() });
             }
 
             await HandlePostPlay(room);
@@ -693,7 +699,7 @@ public class GameHub : Hub
         if (wasCurrentPlayer)
             room.CurrentPlayerIndex = removedIndex >= room.Players.Count ? 0 : removedIndex;
         else if (removedIndex < previousCurrentIndex)
-            room.CurrentPlayerIndex = Math.Max(0, previousCurrentIndex - 1);
+            room.CurrentPlayerIndex = previousCurrentIndex <= 0 ? 0 : previousCurrentIndex - 1;
         else if (previousCurrentIndex >= room.Players.Count)
             room.CurrentPlayerIndex = 0;
     }
@@ -718,6 +724,11 @@ public class GameHub : Hub
             Hand: viewer.Hand
         );
 
+        List<Card> chancellorOptions;
+        if (viewerId == room.ChancellorPlayerId)
+            chancellorOptions = room.ChancellorOptions;
+        else
+            chancellorOptions = new List<Card>();
 
         return new GameStateDto(
             room.Code, room.Phase,
@@ -730,7 +741,7 @@ public class GameHub : Hub
             room.Log.TakeLast(10).ToList(),
             room.RoundsToWin,
             room.PendingAction,
-            viewerId == room.ChancellorPlayerId ? room.ChancellorOptions : [],
+            chancellorOptions,
             room.RoundWinnerIds,
             room.GameWinnerIds,
             DrawnCard: room.CurrentPlayer?.Id == viewerId ? room.DrawnCard : null

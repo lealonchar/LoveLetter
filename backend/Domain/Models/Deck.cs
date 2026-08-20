@@ -1,11 +1,15 @@
 ﻿using LoveLetter.Domain.Enums;
 
+using System;
+using System.Collections.Generic;
+
 namespace LoveLetter.Domain.Models;
 
 public static class Deck
 {
     public static List<Card> CreateDeck() =>
-    [
+        new List<Card>
+        {
         // 2x Spy
         new(CardType.Spy), new(CardType.Spy),
         // 6x Guard
@@ -27,7 +31,7 @@ public static class Deck
         new(CardType.Countess),
         // 1x Princess
         new(CardType.Princess),
-    ];
+        };
 
     // Fisher-Yates shuffle
     public static List<Card> Shuffle(List<Card> deck)

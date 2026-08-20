@@ -93,7 +93,7 @@ public class AiPlayer
             return ((CardType.Guard, null, null), 4);
 
         var guess = BestGuardGuess(room);
-        var score = 28 + Math.Min(18, ThreatScore(target));
+        var score = 28 + Cap(ThreatScore(target), 18);
         return ((CardType.Guard, target.Id, guess), score);
     }
 
@@ -109,7 +109,7 @@ public class AiPlayer
         if (target == null)
             return ((CardType.Priest, null, null), 5);
 
-        return ((CardType.Priest, target.Id, null), 34 + Math.Min(16, ThreatScore(target)));
+        return ((CardType.Priest, target.Id, null), 34 + Cap(ThreatScore(target), 16));
     }
 
     private ((CardType cardToPlay, string? targetId, CardType? guardGuess) move, int score)
@@ -136,7 +136,7 @@ public class AiPlayer
             return ((CardType.Baron, null, null), 5);
 
         var confidence = cardToKeep.Value >= 6 ? 55 : cardToKeep.Value >= 4 ? 30 : 12;
-        return ((CardType.Baron, target.Id, null), confidence + Math.Min(12, ThreatScore(target)));
+        return ((CardType.Baron, target.Id, null), confidence + Cap(ThreatScore(target), 12));
     }
 
     private ((CardType cardToPlay, string? targetId, CardType? guardGuess) move, int score)
@@ -155,7 +155,7 @@ public class AiPlayer
             .FirstOrDefault();
 
         if (target != null)
-            return ((CardType.Prince, target.Id, null), 46 + Math.Min(14, ThreatScore(target)));
+            return ((CardType.Prince, target.Id, null), 46 + Cap(ThreatScore(target), 14));
 
         if (cardToKeep.Value <= 3 && room.DrawPile.Count > 0)
             return ((CardType.Prince, me.Id, null), 28);
@@ -235,7 +235,8 @@ public class AiPlayer
         if (known != null)
             return CardValue(known.Value);
 
-        return 4.4 + Math.Min(1.5, player.Discards.Count * 0.2);
+        var discardBonus = player.Discards.Count * 0.2;
+        return 4.4 + (discardBonus > 1.5 ? 1.5 : discardBonus);
     }
 
     private static int ThreatScore(Player player)
@@ -243,6 +244,9 @@ public class AiPlayer
         var discardThreat = player.Discards.Count > 6 ? 6 : player.Discards.Count;
         return player.Tokens * 5 + discardThreat;
     }
+
+    private static int Cap(int value, int max) =>
+        value > max ? max : value;
 
     private static int CardValue(CardType type) => (int)type;
 

@@ -1,3 +1,4 @@
+using System;
 using LoveLetter.Domain.Enums;
 
 namespace LoveLetter.Domain.Models;

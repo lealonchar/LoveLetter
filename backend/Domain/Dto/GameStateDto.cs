@@ -1,4 +1,5 @@
 ﻿using LoveLetter.Domain.Enums;
+using System.Collections.Generic;
 using LoveLetter.Domain.Models;
 
 namespace LoveLetter.Domain.Dto;
